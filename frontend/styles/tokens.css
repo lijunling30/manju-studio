@@ -1,0 +1,83 @@
+/* ============================================================
+   漫镜工场 · 设计 Token（v1.0）
+   双主题：深色为默认（影院级），亮色跟随系统可切换
+   ============================================================ */
+
+:root[data-theme='dark'] {
+  /* 色彩 */
+  --bg-base: #0B0E1A;
+  --bg-surface: #12162B;
+  --bg-elevated: #1A1F38;
+  --bg-glass: rgba(26, 31, 56, 0.72);
+  --text-primary: #F2F4FF;
+  --text-secondary: #A8AFCC;
+  --text-tertiary: #6B7295;
+  --brand-purple: #7F77DD;
+  --brand-teal: #1D9E75;
+  --brand-blue: #378ADD;
+  --brand-gradient: linear-gradient(135deg, #7F77DD 0%, #1D9E75 100%);
+  --success: #3B6D11;
+  --warning: #854F0B;
+  --danger: #A32D2D;
+  --info: #185FA5;
+  --border-subtle: rgba(242, 244, 255, 0.10);
+  --border-strong: rgba(242, 244, 255, 0.24);
+
+  /* 语义色底 + 描边徽章 */
+  --badge-success-bg: rgba(59, 109, 17, 0.16);
+  --badge-warning-bg: rgba(133, 79, 11, 0.16);
+  --badge-danger-bg: rgba(163, 45, 45, 0.16);
+  --badge-info-bg: rgba(24, 95, 165, 0.16);
+
+  /* 动效 */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-micro: 200ms;
+  --dur-mid: 300ms;
+  --dur-page: 400ms;
+
+  /* 阴影（镜面感） */
+  --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.35);
+  --shadow-elevated: 0 12px 40px rgba(0, 0, 0, 0.5);
+  --glow-brand: 0 0 0 1px rgba(127, 119, 221, 0.4), 0 0 24px rgba(127, 119, 221, 0.25);
+}
+
+:root[data-theme='light'] {
+  --bg-base: #F5F6FB;
+  --bg-surface: #FFFFFF;
+  --bg-elevated: #FFFFFF;
+  --bg-glass: rgba(255, 255, 255, 0.78);
+  --text-primary: #16182B;
+  --text-secondary: #4A4F6B;
+  --text-tertiary: #8A90AC;
+  --brand-purple: #6C63C9;
+  --brand-teal: #17845F;
+  --brand-blue: #2F74C9;
+  --brand-gradient: linear-gradient(135deg, #6C63C9 0%, #17845F 100%);
+  --success: #4C8C1F;
+  --warning: #A06A15;
+  --danger: #C23B3B;
+  --info: #2268B8;
+  --border-subtle: rgba(22, 24, 43, 0.08);
+  --border-strong: rgba(22, 24, 43, 0.18);
+  --badge-success-bg: rgba(76, 140, 31, 0.12);
+  --badge-warning-bg: rgba(160, 106, 21, 0.12);
+  --badge-danger-bg: rgba(194, 59, 59, 0.12);
+  --badge-info-bg: rgba(34, 104, 184, 0.12);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-micro: 200ms;
+  --dur-mid: 300ms;
+  --dur-page: 400ms;
+  --shadow-card: 0 4px 24px rgba(22, 24, 43, 0.08);
+  --shadow-elevated: 0 12px 40px rgba(22, 24, 43, 0.12);
+  --glow-brand: 0 0 0 1px rgba(108, 99, 201, 0.35), 0 0 20px rgba(108, 99, 201, 0.18);
+}
+
+/* 动效关闭（无障碍） */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

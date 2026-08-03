@@ -1,0 +1,108 @@
+@import '../styles/tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body {
+    @apply bg-base text-primary;
+    font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  body {
+    transition: background-color var(--dur-mid) var(--ease-out),
+      color var(--dur-mid) var(--ease-out);
+  }
+  h1 { @apply text-[15px] font-medium; }
+  h2 { @apply text-[14px] font-medium; }
+  .font-mono { font-variant-numeric: tabular-nums; }
+}
+
+@layer components {
+  /* ---- 卡片 ---- */
+  .card {
+    @apply bg-surface rounded-md border border-subtle;
+    box-shadow: var(--shadow-card);
+  }
+  .card-hover {
+    transition: transform var(--dur-micro) var(--ease-out), box-shadow var(--dur-micro) var(--ease-out);
+  }
+  .card-hover:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--glow-brand);
+  }
+
+  /* ---- 品牌渐变按钮 ---- */
+  .btn-brand {
+    @apply rounded-sm px-4 py-2 text-[13px] font-medium text-white;
+    background: var(--brand-gradient);
+    transition: transform var(--dur-micro) var(--ease-out), box-shadow var(--dur-micro) var(--ease-out);
+  }
+  .btn-brand:hover { transform: translateY(-1px); box-shadow: var(--glow-brand); }
+  .btn-brand:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+
+  .btn-ghost {
+    @apply rounded-sm px-4 py-2 text-[13px] font-medium text-secondary border border-subtle;
+    background: transparent;
+    transition: border-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out);
+  }
+  .btn-ghost:hover { @apply border-strong text-primary; }
+
+  .btn-danger {
+    @apply rounded-sm px-4 py-2 text-[13px] font-medium text-white bg-danger;
+  }
+
+  /* ---- 输入框 ---- */
+  .input {
+    @apply rounded-sm px-3 py-2 text-[13px] bg-elevated border border-subtle text-primary w-full outline-none;
+    transition: border-color var(--dur-micro) var(--ease-out);
+  }
+  .input:focus { border-color: var(--brand-purple); box-shadow: 0 0 0 2px rgba(127, 119, 221, 0.25); }
+
+  .select { @apply input appearance-none; }
+
+  /* ---- 徽章 ---- */
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-pill px-2 py-0.5 text-[11px];
+    border: 1px solid var(--border-subtle);
+    opacity: 0.9;
+  }
+  .badge-success { background: var(--badge-success-bg); color: var(--success); border-color: rgba(59, 109, 17, 0.35); }
+  .badge-warning { background: var(--badge-warning-bg); color: var(--warning); border-color: rgba(133, 79, 11, 0.35); }
+  .badge-danger  { background: var(--badge-danger-bg);  color: var(--danger);  border-color: rgba(163, 45, 45, 0.35); }
+  .badge-info    { background: var(--badge-info-bg);    color: var(--info);    border-color: rgba(24, 95, 165, 0.35); }
+  .badge-brand   {
+    background: rgba(127, 119, 221, 0.18); color: var(--brand-purple);
+    border-color: rgba(127, 119, 221, 0.4);
+  }
+
+  /* ---- 玻璃拟态（确认卡/浮层） ---- */
+  .glass {
+    background: var(--bg-glass);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--border-strong);
+    box-shadow: var(--shadow-elevated);
+  }
+
+  /* ---- 任务进度条 ---- */
+  .progress-track { @apply h-1 w-full rounded-pill bg-elevated overflow-hidden; }
+  .progress-bar { height: 100%; background: var(--brand-gradient); border-radius: 999px; transition: width 300ms var(--ease-out); }
+
+  /* ---- 分区标题 ---- */
+  .section-title { @apply text-secondary text-[11px] uppercase tracking-wider font-medium; }
+
+  /* ---- 等宽数字 ---- */
+  .num { @apply font-mono; }
+
+  /* ---- 分割线 ---- */
+  .divider { @apply border-t border-subtle; }
+
+  /* ---- 滚动条 ---- */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 999px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+}
