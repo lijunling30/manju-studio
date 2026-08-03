@@ -16,6 +16,8 @@ frontend/.next/
 frontend/out/
 frontend/dist/
 frontend/.env.local
+frontend/tsconfig.tsbuildinfo
+frontend/next-env.d.ts
 npm-debug.log*
 
 # ---- IDE / OS ----
