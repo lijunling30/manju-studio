@@ -29,6 +29,20 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# 全局错误兜底：任何未捕获异常写日志，UI 模式弹窗提示（双击启动时错误不再不可见）
+$script:LauncherError = $null
+trap {
+    $script:LauncherError = $_.Exception.Message
+    Write-Log "脚本错误: $script:LauncherError"
+    try {
+        Add-Type -AssemblyName System.Windows.Forms | Out-Null
+        [System.Windows.Forms.MessageBox]::Show(
+            "启动器发生错误：`n$script:LauncherError`n`n详细日志：$($script:LogFile)",
+            "漫镜工场启动器", 'OK', 'Error') | Out-Null
+    } catch { }
+    exit 1
+}
+
 # ============ 路径与配置 ============
 $script:RootDir     = Split-Path -Parent $MyInvocation.MyCommand.Path
 $script:BackendDir  = Join-Path $script:RootDir "backend"
@@ -246,6 +260,12 @@ switch ($Command) {
         # ============ UI 模式（默认） ============
         Add-Type -AssemblyName System.Windows.Forms
         Add-Type -AssemblyName System.Drawing
+        # 隐藏宿主控制台窗口（仅保留启动提示框；bat 不再用 -WindowStyle Hidden，出错时错误可见）
+        Add-Type -Name Win32Console -Namespace Native -MemberDefinition @'
+[DllImport("user32.dll")] public static extern IntPtr GetConsoleWindow();
+[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+'@
+        try { [Native.Win32Console]::ShowWindow([Native.Win32Console]::GetConsoleWindow(), 0) | Out-Null } catch { }
         $script:UI = $true
         $script:OpenBrowser = $true
 
