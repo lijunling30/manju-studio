@@ -19,6 +19,7 @@ frontend/.env.local
 frontend/tsconfig.tsbuildinfo
 frontend/next-env.d.ts
 npm-debug.log*
+manju_launcher.log
 
 # ---- IDE / OS ----
 .idea/
