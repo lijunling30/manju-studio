@@ -69,21 +69,26 @@ async def run_video(vt_id: int) -> None:
             vt.error = ""
             db.commit()
 
-            # 进度模拟（异步任务全生命周期：提交 → 轮询 → 结果入库）
-            steps = 8
-            step_delay = _sleep_sim(settings.MOCK_VIDEO_DELAY) / steps
-            for i in range(steps):
-                vt.progress = min(88, 8 + int(80 * (i + 1) / steps))
-                db.commit()
-                await asyncio.sleep(step_delay)
+            if settings.MOCK_MODE:
+                # 模拟模式：进度模拟（异步任务全生命周期：提交 → 轮询 → 结果入库）
+                steps = 8
+                step_delay = _sleep_sim(settings.MOCK_VIDEO_DELAY) / steps
+                for i in range(steps):
+                    vt.progress = min(88, 8 + int(80 * (i + 1) / steps))
+                    db.commit()
+                    await asyncio.sleep(step_delay)
 
             try:
                 keyframe = _pick_keyframe(db, vt.shot_id)
                 if not keyframe:
                     raise ProviderError("该镜头尚无关键帧，请先完成关键帧抽卡")
                 seed = shot.shot_no * 1000 + vt.retry_count if shot else vt.id
-                result = gateway.video(keyframe.image_url, duration, vt.vendor, seed,
-                                       fail_times=fail_times, attempt=attempt)
+                # 真实模式：图生视频为网络调用（提交+轮询），to_thread 避免阻塞事件循环
+                vt.progress = 20
+                db.commit()
+                result = await asyncio.to_thread(
+                    gateway.video, keyframe.image_url, duration, vt.vendor, seed,
+                    fail_times, attempt)
                 vt.result_url = result["video_url"]
                 vt.preview_url = result["preview_url"]
                 vt.frames = result.get("frames", [])
@@ -143,6 +148,7 @@ async def run_record(tr_id: int) -> None:
         handlers = {
             "novel_generate": _job_novel,
             "keyframe_batch": _job_keyframe,
+            "character": _job_character,
             "audio": _job_audio,
             "render": _job_render,
             "compliance": _job_compliance,
@@ -186,10 +192,15 @@ async def _job_novel(db: Session, tr: TaskRecord) -> None:
     db.commit()
     seed = random.Random(f"{p.get('project_id')}-{novel.id}-{tr.id}").randint(0, 10 ** 9)
 
+    # 真实模式为长时网络调用（DeepSeek），to_thread 避免阻塞事件循环
+    tr.progress = 10
+    db.commit()
+    data = await asyncio.to_thread(
+        gateway.generate_novel, p.get("genre") or novel.genre,
+        p.get("setting") or "", p.get("protagonist") or "",
+        int(p.get("chapter_count", 4 if p.get("mode") == "continue" else 8)), seed)
+
     if p.get("mode") == "continue":
-        data = gateway.generate_novel(p.get("genre") or novel.genre, p.get("setting") or "",
-                                      p.get("protagonist") or "", int(p.get("chapter_count", 4)),
-                                      seed)
         base_no = len(novel.chapters)
         novel.chapters = list(novel.chapters) + [
             {"no": base_no + c["no"], "title": c["title"], "content": c["content"]}
@@ -200,10 +211,7 @@ async def _job_novel(db: Session, tr: TaskRecord) -> None:
             for o in data["outline"]
         ]
     else:
-        data = gateway.generate_novel(p.get("genre", project.genre),
-                                      p.get("setting", ""), p.get("protagonist", ""),
-                                      int(p.get("chapter_count", 8)), seed)
-        novel.genre = data and p.get("genre", project.genre) or project.genre
+        novel.genre = p.get("genre", project.genre)
         novel.setting = {"desc": p.get("setting", project.description or "待设定"),
                          "style": project.style_name or "默认"}
         novel.characters = data["characters"]
@@ -212,6 +220,8 @@ async def _job_novel(db: Session, tr: TaskRecord) -> None:
         novel.title = f"《{project.name}》"
 
     novel.status = "completed"
+    tr.progress = 95
+    db.commit()
     cost_model.record_cost(db, user_id=project.user_id, project_id=project.id,
                            module="novel", vendor=data["vendor"], model="deepseek-v3",
                            task_id=tr.id, tokens=data["tokens"], amount=data["amount"],
@@ -233,14 +243,19 @@ async def _job_keyframe(db: Session, tr: TaskRecord) -> None:
     char_names = _shot_char_names(db, shot)
     for i in range(count):
         seed = shot.id * 100 + round_no * 10 + i
-        url = gateway.keyframe(shot.shot_no, shot.prompt_zh[:40], shot.prompt_zh,
-                               char_names, seed, round_no)
+        # 真实模式为网络调用（通义万相异步任务），to_thread 避免阻塞事件循环
+        url = await asyncio.to_thread(
+            gateway.keyframe, shot.shot_no, shot.prompt_zh[:40], shot.prompt_zh,
+            char_names, seed, round_no)
         kf = Keyframe(shot_id=shot.id, project_id=shot.project_id, image_url=url,
                       vendor=vendor, model=model, score=_mock_score(seed),
                       is_approved=False, round=round_no,
                       cost=round(cost_model.unit_price("image", vendor), 4))
         db.add(kf)
-        await asyncio.sleep(_sleep_sim(settings.MOCK_IMAGE_DELAY) / max(1, count))
+        tr.progress = min(90, 8 + int(80 * (i + 1) / max(1, count)))
+        db.commit()
+        if settings.MOCK_MODE:
+            await asyncio.sleep(_sleep_sim(settings.MOCK_IMAGE_DELAY) / max(1, count))
     shot.status = "抽卡中"
     cost_model.record_cost(db, user_id=shot.project_id and _project_owner(db, shot.project_id) or 0,
                            project_id=shot.project_id, module="keyframe", vendor=vendor,
@@ -248,6 +263,47 @@ async def _job_keyframe(db: Session, tr: TaskRecord) -> None:
                            amount=round(cost_model.unit_price("image", vendor) * count, 4),
                            meta={"shot_id": shot.id, "round": round_no})
     tr.result = {"shot_id": shot.id, "round": round_no, "count": count}
+
+
+async def _job_character(db: Session, tr: TaskRecord) -> None:
+    """角色资产生成（M6）：三视图参考图 + 表情集。
+
+    原为同步执行（dispatch 内 7 次图片生成），真实模式下单张图
+    10-60s 会长时间阻塞请求，故改为异步任务队列执行。
+    """
+    p = tr.params or {}
+    char = db.get(Character, tr.ref_id or p.get("character_id"))
+    if not char:
+        raise ProviderError("角色不存在")
+    seed = random.Random(f"{char.id}-{tr.id}").randint(0, 10 ** 9)
+    appearance = char.appearance or char.desc
+
+    refs = []
+    for i in range(3):
+        refs.append(await asyncio.to_thread(
+            gateway.character_ref, char.name, appearance, seed + i))
+        tr.progress = min(80, 8 + int(60 * (i + 1) / 3))
+        db.commit()
+    char.ref_images = refs
+
+    exprs = []
+    for i, emotion in enumerate(["喜", "怒", "哀", "乐"]):
+        exprs.append(await asyncio.to_thread(
+            gateway.expression, char.name, emotion, seed + i))
+        tr.progress = min(95, 75 + int(20 * (i + 1) / 4))
+        db.commit()
+    char.expression_set = exprs
+    if not char.voice_id:
+        char.voice_id = "doubao_voice_1"
+
+    cost_model.record_cost(db, user_id=tr.user_id or char.user_id,
+                           project_id=tr.project_id, module="character",
+                           vendor=settings.image_vendors[0], model="wan2.1",
+                           task_id=tr.id, count=3, amount=round(0.5 * 3, 4),
+                           meta={"character_id": char.id})
+    tr.result = {"character_id": char.id, "images": len(refs),
+                 "expressions": len(exprs)}
+    db.commit()
 
 
 def _shot_char_names(db: Session, shot: Shot) -> list[str]:

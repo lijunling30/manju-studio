@@ -83,3 +83,30 @@ export function sessionId(): string {
   }
   return sid;
 }
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * 轮询任务中心直至指定任务完成。
+ * 异步任务（小说/剧本/分镜/关键帧/角色/视频/音频/成片）在后台执行，
+ * 生成后必须轮询到 success 再刷新数据，否则界面表现为「无响应、图不出现」。
+ */
+export async function waitForTask(
+  taskId: number,
+  kind?: string,
+  intervalMs = 2000,
+  timeoutMs = 15 * 60 * 1000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await sleep(intervalMs);
+    const tasks = await api.get<Array<{ id: number; kind: string; status: string; error?: string }>>('/api/tasks');
+    const t = tasks.find((x) => x.id === taskId && (!kind || x.kind === kind));
+    if (!t) continue;
+    if (t.status === 'success' || t.status === 'completed') return;
+    if (t.status === 'failed' || t.status === 'manual_review' || t.status === 'cancelled') {
+      throw new ApiError(500, t.error || `任务失败（${t.status}）`);
+    }
+  }
+  throw new ApiError(500, '任务执行超时，请稍后在任务中心查看');
+}

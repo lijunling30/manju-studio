@@ -3,7 +3,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { api, assetUrl } from '@/lib/api';
+import { api, assetUrl, waitForTask } from '@/lib/api';
 import { useStudioStore } from '@/store/useStudioStore';
 import { useConfirmGate } from '@/lib/useConfirmGate';
 import { Badge, Button, Card, EmptyState, Spinner, statusTone } from '@/components/ui';
@@ -75,6 +75,11 @@ export default function ExportPage({ params }: { params: { id: string } }) {
           module: 'compliance', projectId,
           params: { final_video_id: fv.id, project_id: projectId },
           onDispatched: async () => { await loadVideos(); },
+          onTaskCreated: async (dispatch) => {
+            const taskId = Number(dispatch.task_id ?? 0);
+            if (taskId) await waitForTask(taskId, 'compliance');
+            await loadVideos();
+          },
         });
       } else {
         await loadVideos();

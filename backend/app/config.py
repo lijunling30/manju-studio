@@ -44,6 +44,30 @@ class Settings(BaseSettings):
     MOCK_VIDEO_DELAY: float = 8.0
     MOCK_AUDIO_DELAY: float = 2.0
 
+    # ============ 真实 AI 厂商配置（MOCK_MODE=false 时启用） ============
+    # 文本：DeepSeek（OpenAI 兼容接口，用户选定文本大模型）
+    DEEPSEEK_API_KEY: str = ""
+    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
+    DEEPSEEK_MODEL: str = "deepseek-chat"          # deepseek-chat / deepseek-reasoner
+    # 图像 + 视频：通义万相（阿里云百炼 DashScope，异步任务式）
+    DASHSCOPE_API_KEY: str = ""
+    DASHSCOPE_BASE_URL: str = "https://dashscope.aliyuncs.com"
+    DASHSCOPE_IMAGE_MODEL: str = "wanx2.1-t2i-turbo"   # 文生图
+    DASHSCOPE_VIDEO_MODEL: str = "wanx2.1-i2v-turbo"   # 图生视频
+
+    # 真实调用超时与轮询节奏（秒）
+    AI_HTTP_TIMEOUT: float = 120.0        # 单次 HTTP 请求超时（文本生成长时响应）
+    AI_TASK_POLL_INTERVAL: float = 3.0    # 异步任务（图像/视频）轮询间隔
+    AI_IMAGE_TASK_TIMEOUT: float = 300.0  # 单张图任务超时（5 分钟）
+    AI_VIDEO_TASK_TIMEOUT: float = 1800.0  # 单条视频任务超时（30 分钟）
+
+    # 文本生成内容质量（用户反馈「内容非常少」——默认每章 2500 字）
+    NOVEL_CHAPTER_WORDS: int = 2500       # 目标每章字数（真实 LLM 按此提示）
+    SCRIPT_SCENE_WORDS: int = 400         # 目标每场戏描述字数
+
+    # 图生视频要求关键帧为「公网可访问」URL；部署后请配置为本机公网地址或 OSS 域名
+    STORAGE_PUBLIC_BASE: str = ""
+
     # CORS
     CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
 

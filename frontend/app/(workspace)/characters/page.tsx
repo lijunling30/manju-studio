@@ -2,7 +2,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { api, assetUrl } from '@/lib/api';
+import { api, assetUrl, waitForTask } from '@/lib/api';
 import { useStudioStore } from '@/store/useStudioStore';
 import { useConfirmGate } from '@/lib/useConfirmGate';
 import { Badge, Button, Card, EmptyState, Spinner } from '@/components/ui';
@@ -31,15 +31,22 @@ export default function CharactersPage() {
     } catch { setLibs([]); }
   };
 
+  const loadChars = async () => {
+    if (!activeLib) { setChars([]); return; }
+    try {
+      const list = await api.get<Character[]>(`/api/character-libraries/${activeLib}/characters`);
+      setChars(list);
+    } catch { setChars([]); }
+  };
+
   useEffect(() => {
     setProject(projectId);
     loadLibs();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!activeLib) { setChars([]); return; }
-    api.get<Character[]>(`/api/character-libraries/${activeLib}/characters`).then(setChars).catch(() => setChars([]));
-  }, [activeLib]);
+    loadChars();
+  }, [activeLib]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const createLib = async () => {
     const lib = await api.post<CharacterLibrary>('/api/character-libraries', {
@@ -57,12 +64,19 @@ export default function CharactersPage() {
         module: 'character', projectId,
         params: { library_id: activeLib, name, appearance, personality, project_id: projectId },
         onDispatched: async () => {
-          const list = await api.get<Character[]>(`/api/character-libraries/${activeLib}/characters`);
-          setChars(list);
+          await loadChars();
           setShowCreate(false);
           setName(''); setAppearance(''); setPersonality('');
         },
+        // 任务异步执行：轮询到完成再刷新（真实模式 7 张图可能数分钟）
+        onTaskCreated: async (dispatch) => {
+          const taskId = Number(dispatch.task_id ?? 0);
+          if (taskId) await waitForTask(taskId, 'character');
+          await loadChars();
+        },
       });
+    } catch {
+      // 任务失败/超时：保留列表
     } finally { setBusy(false); }
   };
 
@@ -72,11 +86,15 @@ export default function CharactersPage() {
       await gate.request({
         module: 'character', projectId,
         params: { character_id: c.id, project_id: projectId },
-        onDispatched: async () => {
-          const list = await api.get<Character[]>(`/api/character-libraries/${activeLib}/characters`);
-          setChars(list);
+        onDispatched: async () => { await loadChars(); },
+        onTaskCreated: async (dispatch) => {
+          const taskId = Number(dispatch.task_id ?? 0);
+          if (taskId) await waitForTask(taskId, 'character');
+          await loadChars();
         },
       });
+    } catch {
+      // 任务失败/超时：保留列表
     } finally { setBusy(false); }
   };
 

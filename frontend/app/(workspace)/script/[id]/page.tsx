@@ -2,7 +2,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { api } from '@/lib/api';
+import { api, waitForTask } from '@/lib/api';
 import { useStudioStore } from '@/store/useStudioStore';
 import { useConfirmGate } from '@/lib/useConfirmGate';
 import { Badge, Button, Card, EmptyState, Spinner, statusTone } from '@/components/ui';
@@ -64,20 +64,16 @@ export default function ScriptPage({ params }: { params: { id: string } }) {
         module: 'novel', projectId,
         params: { ...form, project_id: projectId },
         onDispatched: async () => { await load(); },
+        // 小说生成异步执行（真实模式每章 2500 字需数分钟）：轮询任务完成再加载
+        onTaskCreated: async (dispatch) => {
+          const taskId = Number(dispatch.task_id ?? 0);
+          if (taskId) await waitForTask(taskId, 'novel_generate');
+          await load();
+        },
       });
-      // draft 时由确认卡驱动；bypassed 已派发 → 轮询结果
-      if (useStudioStore.getState().confirmCard === null) {
-        await pollNovel();
-      }
+    } catch {
+      // 任务失败/超时：保留现有内容
     } finally { setBusy(false); }
-  };
-
-  const pollNovel = async () => {
-    for (let i = 0; i < 30; i++) {
-      await new Promise((r) => setTimeout(r, 700));
-      const n = await api.get<Novel | null>(`/api/projects/${projectId}/novel`).catch(() => null);
-      if (n?.status === 'completed') { setNovel(n); return; }
-    }
   };
 
   const convertScript = async () => {

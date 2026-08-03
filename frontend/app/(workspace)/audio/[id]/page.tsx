@@ -2,7 +2,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { api, assetUrl } from '@/lib/api';
+import { api, assetUrl, waitForTask } from '@/lib/api';
 import { useStudioStore } from '@/store/useStudioStore';
 import { useConfirmGate } from '@/lib/useConfirmGate';
 import { Badge, Button, Card, EmptyState, Spinner } from '@/components/ui';
@@ -46,13 +46,15 @@ export default function AudioPage({ params }: { params: { id: string } }) {
       await gate.request({
         module: 'audio_tts', projectId, batchCount: Math.max(1, checked.length),
         params: { project_id: projectId, shot_ids: checked, with_bgm: withBgm },
-        onDispatched: async () => {
-          await new Promise((r) => setTimeout(r, 1200));
+        onDispatched: async () => { await load(); },
+        onTaskCreated: async (dispatch) => {
+          const taskId = Number(dispatch.task_id ?? 0);
+          if (taskId) await waitForTask(taskId, 'audio');
           await load();
         },
       });
-      await new Promise((r) => setTimeout(r, 1500));
-      await load();
+    } catch {
+      // 任务失败/超时：保留已有音轨
     } finally { setBusy(false); }
   };
 

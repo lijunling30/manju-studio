@@ -50,7 +50,15 @@ def test_end_to_end_pipeline(client, user_headers):
     char_id = r.json()["id"]
     r = client.post(f"/api/characters/{char_id}/images", headers=user_headers, json={})
     assert r.status_code == 200, r.text
-    char = client.get(f"/api/character-libraries/{lib_id}/characters", headers=user_headers).json()[0]
+    # 角色资产生成已异步化（真实模式 7 张图需数分钟），轮询等待落库
+    deadline = time.time() + 15
+    char = {}
+    while time.time() < deadline:
+        char = client.get(f"/api/character-libraries/{lib_id}/characters",
+                          headers=user_headers).json()[0]
+        if len(char.get("ref_images") or []) == 3 and len(char.get("expression_set") or []) == 4:
+            break
+        time.sleep(0.2)
     assert len(char["ref_images"]) == 3
     assert len(char["expression_set"]) == 4
 

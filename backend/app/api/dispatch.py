@@ -136,28 +136,31 @@ def dispatch_job(db: Session, user, module: str, params: dict, req_id: int) -> d
     if module == "character":
         char = db.get(Character, params.get("character_id", 0))
         if not char:
-            raise ValueError("角色不存在")
+            # 支持「创建并生成形象」：闸口参数携带角色信息时先建角色记录
+            lib_id = params.get("library_id")
+            if lib_id and params.get("name"):
+                lib = db.get(CharacterLibrary, lib_id)
+                if not lib or lib.user_id != user.id:
+                    raise ValueError("人物子库不存在")
+                char = Character(user_id=user.id, library_id=lib_id, name=params["name"],
+                                 appearance=params.get("appearance") or "",
+                                 personality=params.get("personality") or "")
+                db.add(char)
+                db.commit()
+                db.refresh(char)
+                params = dict(params, character_id=char.id)
+            else:
+                raise ValueError("角色不存在")
         proj = db.get(Project, params.get("project_id", 0)) if params.get("project_id") else None
         if proj:
             _budget_guard(db, user, proj, "character", params)
-        # 生成三视图参考图 + 表情集（同步，Pillow 本地渲染）
-        seed = _seed(char.id, "char")
-        refs = []
-        for _ in range(3):
-            refs.append(gateway.character_ref(char.name, char.appearance or char.desc, seed))
-        char.ref_images = refs
-        char.expression_set = [
-            gateway.expression(char.name, e, seed + i) for i, e in enumerate(["喜", "怒", "哀", "乐"])
-        ]
-        if not char.voice_id:
-            char.voice_id = "doubao_voice_1"
-        cost_model.record_cost(db, user_id=user.id,
-                               project_id=params.get("project_id", 0), module="character",
-                               vendor=settings.image_vendors[0], model="wan2.1",
-                               count=3, amount=round(0.5 * 3, 4),
-                               meta={"character_id": char.id})
+        # 生成三视图参考图 + 表情集（异步任务队列：真实模式单张图 10-60s）
+        tr = TaskRecord(user_id=user.id, project_id=proj.id if proj else None,
+                        module="character", kind="character", ref_id=char.id,
+                        params=dict(params), status="queued")
+        db.add(tr)
         db.commit()
-        return {"kind": "character", "character_id": char.id, "images": len(refs)}
+        return {"kind": "character", "task_id": tr.id, "character_id": char.id}
 
     if module == "keyframe":
         shot = db.get(Shot, params.get("shot_id"))

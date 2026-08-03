@@ -2,9 +2,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { api, assetUrl } from '@/lib/api';
+import { api, assetUrl, waitForTask } from '@/lib/api';
 import { useConfirmGate } from '@/lib/useConfirmGate';
-import { useStudioStore } from '@/store/useStudioStore';
 import { Badge, Button, Card, EmptyState, Spinner } from '@/components/ui';
 import type { Keyframe } from '@/lib/types';
 
@@ -32,16 +31,17 @@ export default function KeyframesPage({ params }: { params: { id: string } }) {
       await gate.request({
         module: 'keyframe', projectId: null, batchCount: count,
         params: { shot_id: shotId, count },
-        onDispatched: async () => {
+        onDispatched: async () => { await load(); },
+        // 任务异步执行（mock 秒级 / 真实 30s+）：轮询到完成再刷新，避免「图不出现/无响应」
+        onTaskCreated: async (dispatch) => {
+          const taskId = Number(dispatch.task_id ?? 0);
+          if (taskId) await waitForTask(taskId, 'keyframe_batch');
           await load();
           setFlip(true);
         },
       });
-      if (useStudioStore.getState().confirmCard === null) {
-        await new Promise((r) => setTimeout(r, 1000));
-        await load();
-        setFlip(true);
-      }
+    } catch {
+      // 任务失败/超时：保留已有帧，按钮复位
     } finally { setBusy(false); }
   };
 

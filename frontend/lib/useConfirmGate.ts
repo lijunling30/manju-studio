@@ -13,6 +13,8 @@ export interface ConfirmGateOptions {
   batchCount?: number;
   /** 闸口放行或用户确认后的回调（派发任务） */
   onDispatched?: (req: AiRequest) => Promise<void> | void;
+  /** 派发响应回调（含 task_id，用于前端轮询任务完成后再刷新） */
+  onTaskCreated?: (dispatch: Record<string, unknown>) => Promise<void> | void;
 }
 
 function highRisk(req: AiRequest): boolean {
@@ -37,8 +39,9 @@ export function useConfirmGate() {
       confirmRound: req.confirm_round,
       onConfirm: async () => {
         await api.post(`/api/ai/requests/${req.id}/confirm`);
-        await api.post(`/api/ai/requests/${req.id}/execute`);
+        const dispatch = await api.post<Record<string, unknown>>(`/api/ai/requests/${req.id}/execute`);
         await opts.onDispatched?.(req);
+        await opts.onTaskCreated?.(dispatch);
         closeConfirmCard();
       },
       onReject: async (correction?: string) => {
@@ -68,6 +71,7 @@ export function useConfirmGate() {
   async function fromGateResponse(resp: GateResponse, opts: ConfirmGateOptions): Promise<AiRequest> {
     if (resp.execute_now) {
       await opts.onDispatched?.(resp.ai_request);
+      await opts.onTaskCreated?.(resp.dispatch ?? {});
       return resp.ai_request;
     }
     openForRequest(resp.ai_request, opts);
