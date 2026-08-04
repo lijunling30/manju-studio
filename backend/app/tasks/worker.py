@@ -18,6 +18,7 @@ from .jobs import run_record, run_video
 logger = logging.getLogger("manju.worker")
 
 _STUCK_MINUTES = 30
+_MAX_CONCURRENT_RECORDS = 3  # 限制并发任务数，避免厂商 API 限流
 
 
 class Worker:
@@ -62,11 +63,18 @@ class Worker:
                 if key not in self._running:
                     self._running[key] = asyncio.create_task(
                         self._watch(key, run_video(vt.id)))
-            for tr in db.query(TaskRecord).filter(TaskRecord.status.in_(["queued", "retrying"])).all():
+            # 限制并发任务数，避免短时间大量请求触发厂商 API 限流（429）
+            running_records = sum(1 for k in self._running if k.startswith("record:"))
+            for tr in db.query(TaskRecord).filter(
+                    TaskRecord.status.in_(["queued", "retrying"])).order_by(TaskRecord.id).all():
                 key = f"record:{tr.id}"
-                if key not in self._running:
-                    self._running[key] = asyncio.create_task(
-                        self._watch(key, run_record(tr.id)))
+                if key in self._running:
+                    continue
+                if running_records >= _MAX_CONCURRENT_RECORDS:
+                    break
+                self._running[key] = asyncio.create_task(
+                    self._watch(key, run_record(tr.id)))
+                running_records += 1
         finally:
             db.close()
 

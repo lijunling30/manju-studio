@@ -14,14 +14,16 @@ export function Button({
 export function Card({
   className = '',
   style,
+  onClick,
   children,
 }: {
   className?: string;
   style?: React.CSSProperties;
+  onClick?: React.MouseEventHandler<HTMLDivElement>;
   children: React.ReactNode;
 }) {
   return (
-    <div className={`card ${className}`} style={style}>
+    <div className={`card ${className}`} style={style} onClick={onClick}>
       {children}
     </div>
   );

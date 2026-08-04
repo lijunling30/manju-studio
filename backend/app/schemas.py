@@ -238,6 +238,8 @@ class CharacterOut(ORMModel):
     outfit: str
     personality: str
     ref_images: list
+    approved_ref: int | None = None
+    expression_candidates: list = []
     expression_set: list
     voice_id: str
     lora_version: str

@@ -134,6 +134,10 @@ def dispatch_job(db: Session, user, module: str, params: dict, req_id: int) -> d
         return {"kind": "shot", "shots": len(prompts), "script_id": script.id}
 
     if module == "character":
+        # —— 批量自动生成：从小说角色表提取，AI 自动创建角色资产 ——
+        if params.get("auto_generate"):
+            return _auto_generate_characters(db, user, project, params)
+
         char = db.get(Character, params.get("character_id", 0))
         if not char:
             # 支持「创建并生成形象」：闸口参数携带角色信息时先建角色记录
@@ -233,3 +237,78 @@ def dispatch_job(db: Session, user, module: str, params: dict, req_id: int) -> d
         return {"kind": "compliance", "task_id": tr.id, "final_video_id": fv.id}
 
     raise ValueError(f"不支持的模块: {module}")
+
+
+def _auto_generate_characters(db: Session, user, project: Project, params: dict) -> dict:
+    """AI 自动生成角色资产：从小说角色表提取，批量创建角色 + 异步生成三视图/表情集。
+
+    用户只需在闸口确认成本，AI 自动完成全部角色资产的创建和生成。
+    """
+    if not project:
+        raise ValueError("缺少 project_id")
+    novel = db.query(Novel).filter(Novel.project_id == project.id,
+                                   Novel.status == "completed").order_by(Novel.id.desc()).first()
+    if not novel:
+        raise ValueError("请先完成小说生成（M2）")
+    novel_chars = novel.characters or []
+    if not novel_chars:
+        raise ValueError("小说角色表为空，无法自动生成角色资产")
+
+    _budget_guard(db, user, project, "character", {**params, "count": len(novel_chars)})
+
+    # 创建/复用项目专属人物子库
+    lib_name = f"{project.name} · 角色库"
+    lib = db.query(CharacterLibrary).filter(
+        CharacterLibrary.user_id == user.id,
+        CharacterLibrary.name == lib_name,
+        CharacterLibrary.status == "active").first()
+    if not lib:
+        lib = CharacterLibrary(user_id=user.id, name=lib_name,
+                               project_ids=[project.id], status="active")
+        db.add(lib)
+        db.flush()
+
+    # 为每个角色创建 Character 记录 + 异步生成任务
+    created, task_ids = [], []
+    for nc in novel_chars:
+        cname = (nc.get("name") or "").strip()
+        if not cname:
+            continue
+        # 跳过已存在的同名角色
+        existing = db.query(Character).filter(
+            Character.library_id == lib.id,
+            Character.name == cname,
+            Character.status == "active").first()
+        if existing:
+            # 已存在但图片未生成 → 补生成任务
+            if not existing.ref_images:
+                tr = TaskRecord(user_id=user.id, project_id=project.id, module="character",
+                                kind="character", ref_id=existing.id, params=dict(params),
+                                status="queued")
+                db.add(tr)
+                db.flush()
+                task_ids.append(tr.id)
+            created.append({"id": existing.id, "name": cname, "skipped": True})
+            continue
+
+        char = Character(
+            user_id=user.id, library_id=lib.id, name=cname,
+            appearance=nc.get("desc") or nc.get("appearance") or "",
+            personality=nc.get("role") or "",
+            desc=nc.get("desc") or "")
+        db.add(char)
+        db.flush()
+
+        tr = TaskRecord(user_id=user.id, project_id=project.id, module="character",
+                        kind="character", ref_id=char.id, params=dict(params),
+                        status="queued")
+        db.add(tr)
+        db.flush()
+
+        created.append({"id": char.id, "name": cname})
+        task_ids.append(tr.id)
+
+    db.commit()
+    return {"kind": "character_auto", "library_id": lib.id,
+            "characters": created, "task_ids": task_ids,
+            "total": len(created)}

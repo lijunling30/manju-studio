@@ -64,13 +64,17 @@ export const api = {
       method: 'PUT',
       body: body ? JSON.stringify(body) : undefined,
     }),
+  delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
 };
 
-/** 媒体 URL：后端静态资产经 Next 代理 */
+/** 媒体 URL：后端静态资产经 Next 代理（/storage/* → backend /storage/*） */
 export function assetUrl(rel: string): string {
   if (!rel) return '';
   if (rel.startsWith('http')) return rel;
-  return `/storage/${rel.replace(/^storage\//, '')}`;
+  // 后端 save_bytes 已返回 /storage/xxx 格式，直接使用，避免双重前缀
+  if (rel.startsWith('/storage/')) return rel;
+  // 兜底：不带前缀的相对路径补上 /storage/
+  return `/storage/${rel.replace(/^\/+/, '')}`;
 }
 
 /** 每次会话唯一 ID（确认闸口会话级开关） */

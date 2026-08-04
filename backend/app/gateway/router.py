@@ -124,9 +124,9 @@ class Gateway:
             return wanxiang_image.generate_character_ref(name, appearance, seed)
         return mock_image.generate_character_ref(name, appearance, seed)
 
-    def expression(self, name: str, emotion: str, seed: int) -> str:
+    def expression(self, name: str, appearance: str, emotion: str, seed: int) -> str:
         if not settings.MOCK_MODE:
-            return wanxiang_image.generate_expression(name, emotion, seed)
+            return wanxiang_image.generate_expression(name, appearance, emotion, seed)
         return mock_image.generate_expression(name, emotion, seed)
 
     def keyframe(self, shot_no: int, scene_desc: str, prompt_zh: str, char_names: list[str],

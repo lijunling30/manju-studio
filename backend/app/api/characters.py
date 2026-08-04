@@ -145,7 +145,7 @@ def delete_character(char_id: int, user: User = Depends(get_current_user),
     return {"message": "已删除"}
 
 
-@router.post("/characters/{char_id}/images", summary="生成角色三视图 + 表情集（过闸口）")
+@router.post("/characters/{char_id}/images", summary="生成角色候选形象图（过闸口）")
 def generate_images(char_id: int, data: CharacterImageIn,
                     user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     c = db.get(Character, char_id)
@@ -154,3 +154,45 @@ def generate_images(char_id: int, data: CharacterImageIn,
     params = {"character_id": c.id, "count": 3}
     return gate_request(db, user, module="character", project_id=None, params=params,
                         batch_count=1, session_id=data.session_id)
+
+
+@router.post("/characters/{char_id}/approve", summary="确认三视图 → 触发表情候选生成")
+def approve_character(char_id: int, data: dict,
+                      user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """用户从候选三视图中选择一张，确认后异步生成 8 张候选表情。"""
+    c = db.get(Character, char_id)
+    if not c or c.user_id != user.id:
+        raise HTTPException(status_code=404, detail="角色不存在")
+    ref_index = data.get("ref_index", 0)
+    if not c.ref_images or ref_index >= len(c.ref_images):
+        raise HTTPException(status_code=400, detail="候选索引无效")
+    c.approved_ref = ref_index
+    db.commit()
+
+    from ..models import TaskRecord
+    tr = TaskRecord(user_id=user.id, project_id=None, module="character",
+                    kind="character_expression", ref_id=c.id,
+                    params={"character_id": c.id, "ref_index": ref_index},
+                    status="queued")
+    db.add(tr)
+    db.commit()
+    db.refresh(tr)
+    return {"task_id": tr.id, "character_id": c.id, "approved_ref": ref_index}
+
+
+@router.post("/characters/{char_id}/approve-expressions", summary="确认表情集 → 从候选中选择 4 张")
+def approve_expressions(char_id: int, data: dict,
+                        user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """用户从 8 张候选表情中选择 4 张作为最终表情集。"""
+    c = db.get(Character, char_id)
+    if not c or c.user_id != user.id:
+        raise HTTPException(status_code=404, detail="角色不存在")
+    indices = data.get("indices", [])
+    if not isinstance(indices, list) or len(indices) != 4:
+        raise HTTPException(status_code=400, detail="需要选择 4 张表情")
+    candidates = c.expression_candidates or []
+    if not candidates or any(i >= len(candidates) for i in indices):
+        raise HTTPException(status_code=400, detail="候选索引无效")
+    c.expression_set = [candidates[i] for i in indices]
+    db.commit()
+    return {"character_id": c.id, "expression_set": c.expression_set}

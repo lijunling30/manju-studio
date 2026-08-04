@@ -60,6 +60,7 @@ $script:IdleSeconds  = 0
 $script:AutoExit     = $false
 $script:UI           = $false      # 是否 UI 模式
 $script:OpenBrowser  = $false      # 就绪后是否自动打开浏览器（仅 UI 模式）
+$script:ReadyHandled = $false      # ready 阶段是否已处理（打开浏览器+启动后台监控+关闭提示框）
 $script:StatusTitle  = ""
 $script:StatusDetail = ""
 
@@ -180,6 +181,32 @@ function Update-Phase {
             }
         }
         "ready" {
+            # 首次进入 ready：UI 模式下打开浏览器 → 启动后台闲置监控 → 自动关闭提示框
+            if (-not $script:ReadyHandled) {
+                $script:ReadyHandled = $true
+                if ($script:OpenBrowser) {
+                    Start-Process $script:PlatformUrl
+                }
+                Write-Log "平台就绪：$script:PlatformUrl"
+                # UI 模式：启动后台隐藏进程接管闲置检测，然后关闭提示框
+                if ($script:UI) {
+                    Start-Process -FilePath "powershell.exe" -ArgumentList @(
+                        "-NoProfile","-ExecutionPolicy","Bypass","-WindowStyle","Hidden",
+                        "-File",$PSCommandPath,"-Command","run",
+                        "-IdleMinutes",$IdleMinutes
+                    ) -WindowStyle Hidden
+                    Write-Log "已启动后台闲置监控进程，2 秒后关闭启动提示框"
+                    # 延迟 2 秒关闭提示框（让用户看到"已就绪"状态）
+                    $script:closeTimer = New-Object System.Windows.Forms.Timer
+                    $script:closeTimer.Interval = 2000
+                    $script:closeTimer.Add_Tick({
+                        $script:closeTimer.Stop()
+                        $script:AutoExit = $true   # 标记自动退出，FormClosing 不停止平台
+                        $script:form.Close()
+                    })
+                    $script:closeTimer.Start()
+                }
+            }
             $mins = [math]::Round($script:IdleSeconds / 60, 1)
             Set-Idle "闲置检测：连续 $IdleMinutes 分钟无访问将自动关闭（当前 $mins 分钟）"
         }
@@ -269,13 +296,13 @@ switch ($Command) {
         $script:UI = $true
         $script:OpenBrowser = $true
 
-        $form = New-Object System.Windows.Forms.Form
-        $form.Text = "漫镜工场 ManJu Studio 启动器"
-        $form.Size = New-Object System.Drawing.Size(480, 300)
-        $form.StartPosition = "CenterScreen"
-        $form.FormBorderStyle = "FixedSingle"
-        $form.MaximizeBox = $false
-        $form.BackColor = [System.Drawing.Color]::FromArgb(20, 22, 28)
+        $script:form = New-Object System.Windows.Forms.Form
+        $script:form.Text = "漫镜工场 ManJu Studio 启动器"
+        $script:form.Size = New-Object System.Drawing.Size(480, 300)
+        $script:form.StartPosition = "CenterScreen"
+        $script:form.FormBorderStyle = "FixedSingle"
+        $script:form.MaximizeBox = $false
+        $script:form.BackColor = [System.Drawing.Color]::FromArgb(20, 22, 28)
 
         $baseFont = New-Object System.Drawing.Font("Microsoft YaHei UI", 9)
         $titleFont = New-Object System.Drawing.Font("Microsoft YaHei UI", 16, [System.Drawing.FontStyle]::Bold)
@@ -287,7 +314,7 @@ switch ($Command) {
         $lblTitle.ForeColor = [System.Drawing.Color]::FromArgb(127, 119, 221)
         $lblTitle.Location = New-Object System.Drawing.Point(24, 20)
         $lblTitle.Size = New-Object System.Drawing.Size(430, 30)
-        $form.Controls.Add($lblTitle)
+        $script:form.Controls.Add($lblTitle)
 
         # 状态大字
         $script:lblStatus = New-Object System.Windows.Forms.Label
@@ -296,7 +323,7 @@ switch ($Command) {
         $script:lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(237, 237, 240)
         $script:lblStatus.Location = New-Object System.Drawing.Point(24, 66)
         $script:lblStatus.Size = New-Object System.Drawing.Size(430, 26)
-        $form.Controls.Add($script:lblStatus)
+        $script:form.Controls.Add($script:lblStatus)
 
         # 详情小字
         $script:lblDetail = New-Object System.Windows.Forms.Label
@@ -305,7 +332,7 @@ switch ($Command) {
         $script:lblDetail.ForeColor = [System.Drawing.Color]::FromArgb(154, 154, 165)
         $script:lblDetail.Location = New-Object System.Drawing.Point(24, 96)
         $script:lblDetail.Size = New-Object System.Drawing.Size(430, 20)
-        $form.Controls.Add($script:lblDetail)
+        $script:form.Controls.Add($script:lblDetail)
 
         # 进度条
         $script:prg = New-Object System.Windows.Forms.ProgressBar
@@ -313,7 +340,7 @@ switch ($Command) {
         $script:prg.MarqueeAnimationSpeed = 30
         $script:prg.Location = New-Object System.Drawing.Point(24, 128)
         $script:prg.Size = New-Object System.Drawing.Size(430, 12)
-        $form.Controls.Add($script:prg)
+        $script:form.Controls.Add($script:prg)
 
         # 闲置提示
         $script:lblIdle = New-Object System.Windows.Forms.Label
@@ -322,7 +349,7 @@ switch ($Command) {
         $script:lblIdle.ForeColor = [System.Drawing.Color]::FromArgb(124, 124, 136)
         $script:lblIdle.Location = New-Object System.Drawing.Point(24, 152)
         $script:lblIdle.Size = New-Object System.Drawing.Size(430, 18)
-        $form.Controls.Add($script:lblIdle)
+        $script:form.Controls.Add($script:lblIdle)
 
         # 底部提示
         $lblTip = New-Object System.Windows.Forms.Label
@@ -331,7 +358,7 @@ switch ($Command) {
         $lblTip.ForeColor = [System.Drawing.Color]::FromArgb(107, 107, 118)
         $lblTip.Location = New-Object System.Drawing.Point(24, 182)
         $lblTip.Size = New-Object System.Drawing.Size(430, 18)
-        $form.Controls.Add($lblTip)
+        $script:form.Controls.Add($lblTip)
 
         # 按钮样式
         $btnStyle = {
@@ -354,7 +381,7 @@ switch ($Command) {
             Set-Status "正在重新启动…" ""
             Write-Log "用户点击「停止后重试」"
         })
-        $form.Controls.Add($btnRestart)
+        $script:form.Controls.Add($btnRestart)
 
         $btnStop = New-Object System.Windows.Forms.Button
         $btnStop.Text = "停止"
@@ -365,12 +392,12 @@ switch ($Command) {
             Stop-Platform
             Write-Log "用户点击「停止」，退出启动器"
             $script:AutoExit = $true
-            $form.Close()
+            $script:form.Close()
         })
-        $form.Controls.Add($btnStop)
+        $script:form.Controls.Add($btnStop)
 
         # 关闭窗体（X）→ 停止服务并退出
-        $form.Add_FormClosing({
+        $script:form.Add_FormClosing({
             param($sender, $e)
             if (-not $script:AutoExit) {
                 Write-Log "窗口被关闭，停止平台"
@@ -387,18 +414,19 @@ switch ($Command) {
         $idleTimer.Interval = [math]::Max(1, $IdleCheckIntervalSec) * 1000
         $idleTimer.Add_Tick({ Update-Idle })
 
-        $form.Add_Shown({
+        $script:form.Add_Shown({
             $tick.Start()
             $idleTimer.Start()
             $script:Phase = "init"
         })
 
         try {
-            [System.Windows.Forms.Application]::Run($form)
+            [System.Windows.Forms.Application]::Run($script:form)
         } finally {
             $tick.Stop(); $idleTimer.Stop()
+            if ($script:closeTimer) { $script:closeTimer.Stop(); $script:closeTimer.Dispose() }
             $tick.Dispose(); $idleTimer.Dispose()
-            $form.Dispose()
+            $script:form.Dispose()
         }
     }
 }

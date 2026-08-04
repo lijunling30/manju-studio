@@ -1,20 +1,21 @@
-/* 左栏：项目列表 + 9 步流程导航（P-02） */
+/* 左栏：项目列表（增删改查）+ 9 步流程导航（P-02） */
 'use client';
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { useStudioStore } from '@/store/useStudioStore';
 import { Badge, statusTone } from '@/components/ui';
+import ProjectModal from '@/components/studio/ProjectModal';
 import type { Project, ProjectFlow } from '@/lib/types';
 
 const FLOW_LABELS: [string, string, string][] = [
   ['project', '项目', '/dashboard'],
   ['novel', '小说', '/script'],
   ['script', '剧本', '/script'],
-  ['shot', '分镜', '/storyboard'],
   ['character', '角色', '/characters'],
+  ['shot', '分镜', '/storyboard'],
   ['keyframe', '抽卡', '/keyframes'],
   ['video', '视频', '/video'],
   ['audio', '配音', '/audio'],
@@ -22,18 +23,26 @@ const FLOW_LABELS: [string, string, string][] = [
 ];
 
 export default function Sidebar() {
-  const [projects, setProjects] = useState<Project[]>([]);
   const [flow, setFlow] = useState<ProjectFlow | null>(null);
-  const [creating, setCreating] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalMode, setModalMode] = useState<'create' | 'edit'>('create');
+  const [editing, setEditing] = useState<Project | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const pathname = usePathname();
+  const router = useRouter();
+  const projects = useStudioStore((s) => s.projects);
+  const setProjects = useStudioStore((s) => s.setProjects);
   const projectId = useStudioStore((s) => s.projectId);
   const setProject = useStudioStore((s) => s.setProject);
 
-  const loadProjects = async () => {
+  const loadProjects = async (keepCurrent = false) => {
     try {
       const list = await api.get<Project[]>('/api/projects');
       setProjects(list);
-      if (!projectId && list.length) setProject(list[0].id);
+      if (!keepCurrent) {
+        const cur = useStudioStore.getState().projectId;
+        if (!cur && list.length) setProject(list[0].id);
+      }
     } catch { /* 未登录等 */ }
   };
 
@@ -46,17 +55,30 @@ export default function Sidebar() {
       .catch(() => {});
   }, [projectId, pathname]);
 
-  const onCreate = async () => {
-    setCreating(true);
-    try {
-      const p = await api.post<Project>('/api/projects', {
-        name: `新项目 ${projects.length + 1}`, genre: '都市', description: '',
-        style_id: 'style_01', style_name: '默认', target_platform: 'douyin_9_16', budget_limit: 500,
-      });
-      await loadProjects();
-      setProject(p.id);
-      window.location.href = `/dashboard?project=${p.id}`;
-    } finally { setCreating(false); }
+  /** 切换当前项目：更新 store 并同步 URL query（保留当前页面路径） */
+  const switchProject = (id: number) => {
+    setProject(id);
+    router.replace(`${pathname}?project=${id}`, { scroll: false });
+  };
+
+  const openCreate = () => { setModalMode('create'); setEditing(null); setModalOpen(true); };
+  const openEdit = (p: Project) => { setModalMode('edit'); setEditing(p); setModalOpen(true); };
+
+  const onSaved = async (p: Project) => {
+    setModalOpen(false);
+    await loadProjects(true);          // 先刷新列表，再切换，避免时序不一致
+    switchProject(p.id);
+  };
+
+  const onDelete = async (p: Project) => {
+    await api.delete(`/api/projects/${p.id}`);
+    setDeletingId(null);
+    await loadProjects(true);
+    if (useStudioStore.getState().projectId === p.id) {
+      const rest = useStudioStore.getState().projects;
+      if (rest.length) switchProject(rest[0].id);
+      else setProject(null);
+    }
   };
 
   return (
@@ -80,25 +102,39 @@ export default function Sidebar() {
         <span className="section-title">项目</span>
         <button
           className="text-brand-purple text-[13px] hover:opacity-80"
-          onClick={onCreate}
-          disabled={creating}
+          onClick={openCreate}
           title="新建项目"
         >+ 新建</button>
       </div>
       <div className="px-3 space-y-1 overflow-y-auto flex-1 min-h-0">
         {projects.map((p) => (
-          <button
+          <div
             key={p.id}
-            onClick={() => setProject(p.id)}
-            className={`w-full text-left card p-2.5 card-hover ${projectId === p.id ? '' : 'opacity-80'}`}
+            className={`group relative card p-2.5 cursor-pointer ${projectId === p.id ? '' : 'opacity-80'}`}
             style={projectId === p.id ? { boxShadow: 'var(--glow-brand)' } : undefined}
+            onClick={() => switchProject(p.id)}
           >
-            <div className="text-[13px] truncate">{p.name}</div>
+            <div className="flex items-center justify-between">
+              <div className="text-[13px] truncate flex-1">{p.name}</div>
+              {/* hover 操作：编辑 / 删除（二次确认） */}
+              <div className="hidden group-hover:flex items-center gap-1 ml-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+                <button className="text-tertiary hover:text-primary text-[11px] px-1" title="编辑项目"
+                  onClick={() => openEdit(p)}>✎</button>
+                {deletingId === p.id ? (
+                  <button className="text-[11px] px-1 font-medium"
+                    style={{ color: 'var(--danger, #E5484D)' }} title="再次点击确认删除"
+                    onClick={() => onDelete(p)}>确认?</button>
+                ) : (
+                  <button className="text-tertiary hover:text-danger text-[11px] px-1" title="删除项目"
+                    onClick={() => setDeletingId(p.id)}>🗑</button>
+                )}
+              </div>
+            </div>
             <div className="flex items-center justify-between mt-1">
               <span className="text-tertiary text-[10px]">{p.genre}</span>
               <span className="num text-[10px] text-tertiary">{p.progress}%</span>
             </div>
-          </button>
+          </div>
         ))}
         {projects.length === 0 && (
           <p className="text-tertiary text-[12px] py-6 text-center">暂无项目，点击右上角新建</p>
@@ -127,6 +163,14 @@ export default function Sidebar() {
           </ol>
         </div>
       )}
+
+      <ProjectModal
+        open={modalOpen}
+        mode={modalMode}
+        project={editing}
+        onClose={() => setModalOpen(false)}
+        onSaved={onSaved}
+      />
     </aside>
   );
 }

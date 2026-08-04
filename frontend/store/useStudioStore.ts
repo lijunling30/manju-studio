@@ -1,6 +1,6 @@
-/* 全局工作台状态：当前项目 / 流程 / 闸口开关 / 主题 / 确认卡 */
+/* 全局工作台状态：当前项目 / 项目列表 / 流程 / 闸口开关 / 主题 / 确认卡 */
 import { create } from 'zustand';
-import type { GateResponse } from '@/lib/types';
+import type { GateResponse, Project } from '@/lib/types';
 
 export type ThemeMode = 'dark' | 'light' | 'system';
 
@@ -22,10 +22,12 @@ export interface ConfirmPayload {
 
 interface StudioState {
   projectId: number | null;
+  projects: Project[];
   theme: ThemeMode;
   gateEnabled: boolean;
   confirmCard: ConfirmPayload | null;
   setProject: (id: number | null) => void;
+  setProjects: (list: Project[]) => void;
   setTheme: (t: ThemeMode) => void;
   setGateEnabled: (v: boolean) => void;
   openConfirmCard: (p: ConfirmPayload) => void;
@@ -47,10 +49,12 @@ const initialTheme: ThemeMode =
 
 export const useStudioStore = create<StudioState>((set) => ({
   projectId: null,
+  projects: [],
   theme: initialTheme,
   gateEnabled: true,
   confirmCard: null,
   setProject: (id) => set({ projectId: id }),
+  setProjects: (list) => set({ projects: list }),
   setTheme: (t) => {
     applyTheme(t);
     set({ theme: t });

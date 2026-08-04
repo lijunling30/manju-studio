@@ -3,6 +3,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { api, sessionId } from '@/lib/api';
 import { useStudioStore } from '@/store/useStudioStore';
 import { Badge, Card, statusTone } from '@/components/ui';
@@ -11,8 +12,8 @@ import type { CostSummary, GateSetting, Project, ProjectFlow } from '@/lib/types
 const MODULES: { key: string; label: string; desc: string; href: (id: number) => string }[] = [
   { key: 'novel', label: '小说生成', desc: '题材/人设/章纲', href: (id) => `/script/${id}` },
   { key: 'script', label: '剧本结构化', desc: '分场 + 情绪曲线', href: (id) => `/script/${id}` },
-  { key: 'shot', label: '分镜设计', desc: '镜头语言 + 纯中文提示词', href: (id) => `/storyboard/${id}` },
   { key: 'character', label: '角色资产库', desc: '三视图 + 表情集', href: () => '/characters' },
+  { key: 'shot', label: '分镜设计', desc: '镜头语言 + 纯中文提示词', href: (id) => `/storyboard/${id}` },
   { key: 'keyframe', label: '关键帧抽卡', desc: '候选帧 + AI 评分', href: (id) => `/keyframes/${id}` },
   { key: 'video', label: '多镜头视频', desc: 'Vidu/豆包/可灵聚合', href: (id) => `/video/${id}` },
   { key: 'audio', label: '配音音效', desc: 'TTS + BGM + 音效', href: (id) => `/audio/${id}` },
@@ -23,7 +24,9 @@ const MODULES: { key: string; label: string; desc: string; href: (id: number) =>
 export default function DashboardPage() {
   const projectId = useStudioStore((s) => s.projectId);
   const setProject = useStudioStore((s) => s.setProject);
-  const [projects, setProjects] = useState<Project[]>([]);
+  const projects = useStudioStore((s) => s.projects);
+  const setProjects = useStudioStore((s) => s.setProjects);
+  const router = useRouter();
   const [flow, setFlow] = useState<ProjectFlow | null>(null);
   const [cost, setCost] = useState<CostSummary | null>(null);
   const [gate, setGate] = useState<GateSetting | null>(null);
@@ -32,9 +35,11 @@ export default function DashboardPage() {
     try {
       const list = await api.get<Project[]>('/api/projects');
       setProjects(list);
-      const active = pid ?? projectId ?? list[0]?.id ?? null;
+      const urlPid = Number(new URLSearchParams(window.location.search).get('project')) || null;
+      const active = pid ?? projectId ?? urlPid ?? list[0]?.id ?? null;
       if (active) {
         setProject(active);
+        router.replace(`/dashboard?project=${active}`, { scroll: false });
         api.get<ProjectFlow>(`/api/projects/${active}/flow`).then(setFlow).catch(() => {});
         api.get<CostSummary>(`/api/costs/projects/${active}`).then(setCost).catch(() => {});
       }

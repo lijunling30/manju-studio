@@ -87,8 +87,25 @@ export interface Script {
   novel_id: number;
   title: string;
   status: string;
-  scenes: { scene_no: number; location: string; time: string; emotion: string; summary: string; beats: unknown[] }[];
+  scenes: ScriptScene[];
   emotion_curve: { scene_no: number; emotion: string; intensity: number }[];
+}
+
+export interface ScriptScene {
+  scene_no: number;
+  location: string;
+  time: string;
+  emotion: string;
+  summary: string;
+  beats: ScriptBeat[];
+}
+
+export interface ScriptBeat {
+  character: string;
+  dialogue: string;
+  narration: string;
+  action: string;
+  emotion: string;
 }
 
 export interface Shot {
@@ -126,8 +143,10 @@ export interface Character {
   appearance: string;
   personality: string;
   desc: string;
-  ref_images: string[];
-  expression_set: string[];
+  ref_images: string[];              // 候选三视图
+  approved_ref: number | null;       // 用户选中的三视图索引
+  expression_candidates: string[];   // 候选表情图（8 张）
+  expression_set: string[];          // 用户确认的表情集（4 张）
   voice_id: string;
   lora_version: string;
   status: string;

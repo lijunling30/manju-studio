@@ -149,6 +149,7 @@ async def run_record(tr_id: int) -> None:
             "novel_generate": _job_novel,
             "keyframe_batch": _job_keyframe,
             "character": _job_character,
+            "character_expression": _job_expression,
             "audio": _job_audio,
             "render": _job_render,
             "compliance": _job_compliance,
@@ -166,6 +167,7 @@ async def run_record(tr_id: int) -> None:
             if tr.status == "running":
                 tr.status = "success"
                 tr.progress = 100
+                tr.error = ""            # 成功后清除重试期残留的错误信息
             db.commit()
         except Exception as exc:
             logger.warning("task %s(%s) 失败: %s", tr.id, tr.kind, exc)
@@ -266,43 +268,79 @@ async def _job_keyframe(db: Session, tr: TaskRecord) -> None:
 
 
 async def _job_character(db: Session, tr: TaskRecord) -> None:
-    """角色资产生成（M6）：三视图参考图 + 表情集。
+    """角色候选抽卡（M5）：生成 N 张候选形象图供用户选择。
 
-    原为同步执行（dispatch 内 7 次图片生成），真实模式下单张图
-    10-60s 会长时间阻塞请求，故改为异步任务队列执行。
+    生成 4 张不同 seed 的角色全身形象设计稿，存入 ref_images。
+    用户在前端选择满意的候选后，调用 approve 触发表情集生成。
     """
     p = tr.params or {}
     char = db.get(Character, tr.ref_id or p.get("character_id"))
     if not char:
         raise ProviderError("角色不存在")
-    seed = random.Random(f"{char.id}-{tr.id}").randint(0, 10 ** 9)
     appearance = char.appearance or char.desc
+    candidate_count = p.get("candidate_count", 4)
 
+    # 生成 N 张候选形象图（不同 seed → 不同变体）
     refs = []
-    for i in range(3):
+    for i in range(candidate_count):
+        seed = random.Random(f"{char.id}-{tr.id}-{i}").randint(0, 10 ** 9)
         refs.append(await asyncio.to_thread(
-            gateway.character_ref, char.name, appearance, seed + i))
-        tr.progress = min(80, 8 + int(60 * (i + 1) / 3))
+            gateway.character_ref, char.name, appearance, seed))
+        tr.progress = min(90, int(90 * (i + 1) / candidate_count))
         db.commit()
     char.ref_images = refs
-
-    exprs = []
-    for i, emotion in enumerate(["喜", "怒", "哀", "乐"]):
-        exprs.append(await asyncio.to_thread(
-            gateway.expression, char.name, emotion, seed + i))
-        tr.progress = min(95, 75 + int(20 * (i + 1) / 4))
-        db.commit()
-    char.expression_set = exprs
-    if not char.voice_id:
-        char.voice_id = "doubao_voice_1"
+    char.approved_ref = None  # 重置选择状态
+    char.expression_set = []  # 清空旧表情集
 
     cost_model.record_cost(db, user_id=tr.user_id or char.user_id,
                            project_id=tr.project_id, module="character",
                            vendor=settings.image_vendors[0], model="wan2.1",
-                           task_id=tr.id, count=3, amount=round(0.5 * 3, 4),
-                           meta={"character_id": char.id})
-    tr.result = {"character_id": char.id, "images": len(refs),
-                 "expressions": len(exprs)}
+                           task_id=tr.id, count=candidate_count,
+                           amount=round(0.5 * candidate_count, 4),
+                           meta={"character_id": char.id, "type": "candidate"})
+    tr.result = {"character_id": char.id, "candidates": len(refs)}
+    db.commit()
+
+
+async def _job_expression(db: Session, tr: TaskRecord) -> None:
+    """角色表情候选生成：基于用户选中的三视图 seed 生成 8 张候选表情。
+
+    4 种情绪（喜怒哀乐）× 2 种变体 = 8 张候选，存入 expression_candidates。
+    用户在前端从中选择 4 张（每种情绪选 1 张）作为最终表情集。
+    使用与选中三视图相同的 seed + 详细外貌描述，增强角色一致性。
+    """
+    p = tr.params or {}
+    char = db.get(Character, tr.ref_id or p.get("character_id"))
+    if not char:
+        raise ProviderError("角色不存在")
+    approved = p.get("ref_index", char.approved_ref or 0)
+    if approved is None or not char.ref_images or approved >= len(char.ref_images):
+        raise ProviderError("未选择三视图或索引无效")
+
+    # 用与选中三视图相同的 seed，保证角色外观一致
+    base_seed = random.Random(f"{char.id}-{tr.id}-{approved}").randint(0, 10 ** 9)
+    appearance = char.appearance or char.desc
+
+    # 4 种情绪 × 2 种变体 = 8 张候选表情
+    emotions = ["喜", "怒", "哀", "乐"]
+    candidates = []
+    for ei, emotion in enumerate(emotions):
+        for vi in range(2):
+            seed = base_seed + ei * 100 + vi  # 同情绪变体间 seed 接近
+            candidates.append(await asyncio.to_thread(
+                gateway.expression, char.name, appearance, emotion, seed))
+            tr.progress = min(95, int(95 * (len(candidates)) / 8))
+            db.commit()
+    char.expression_candidates = candidates
+    char.expression_set = []  # 清空旧表情集，等用户抽卡选择
+
+    cost_model.record_cost(db, user_id=tr.user_id or char.user_id,
+                           project_id=tr.project_id, module="character",
+                           vendor=settings.image_vendors[0], model="wan2.1",
+                           task_id=tr.id, count=8, amount=round(0.5 * 8, 4),
+                           meta={"character_id": char.id, "type": "expression_candidates",
+                                 "ref_index": approved})
+    tr.result = {"character_id": char.id, "candidates": len(candidates)}
     db.commit()
 
 

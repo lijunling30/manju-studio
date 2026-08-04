@@ -115,8 +115,10 @@ class Character(Base):
     appearance = Column(Text, default="")               # 外貌
     outfit = Column(Text, default="")                   # 服饰
     personality = Column(Text, default="")              # 性格
-    ref_images = Column(JSON, default=list)             # 参考图（三视图等）
-    expression_set = Column(JSON, default=list)         # 表情集（喜怒哀乐）
+    ref_images = Column(JSON, default=list)             # 候选三视图（抽卡用，用户从中选择）
+    approved_ref = Column(Integer, nullable=True)       # 用户选中的三视图索引（None=未选择）
+    expression_candidates = Column(JSON, default=list)  # 候选表情图（8 张，用户从中选 4 张）
+    expression_set = Column(JSON, default=list)         # 用户确认的表情集（4 张）
     voice_id = Column(String(32), default="")           # 绑定固定音色 ID（M8 配音一致性）
     lora_version = Column(String(16), default="")       # LoRA 版本（P2）
     status = Column(String(16), default="active")

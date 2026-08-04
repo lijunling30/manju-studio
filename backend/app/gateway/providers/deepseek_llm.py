@@ -73,7 +73,7 @@ def _chat(messages: list[dict], *, json_mode: bool = False,
 
 
 def _extract_json(text: str) -> dict:
-    """从 LLM 输出中稳健提取 JSON 对象（容忍代码块围栏/前后缀）。"""
+    """从 LLM 输出中稳健提取 JSON 对象（容忍代码块围栏/前后缀/截断）。"""
     text = (text or "").strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.S).strip()
@@ -82,12 +82,55 @@ def _extract_json(text: str) -> dict:
     except json.JSONDecodeError:
         m = re.search(r"\{.*\}", text, flags=re.S)
         if m:
+            raw = m.group(0)
             try:
-                return json.loads(m.group(0))
+                return json.loads(raw)
             except json.JSONDecodeError as exc:
+                # 容错：LLM 输出被截断时尝试补全闭合（大纲/分场等数组场景）
+                repaired = _repair_truncated(raw)
+                if repaired is not None:
+                    return repaired
                 raise ProviderError(
                     f"LLM 返回非法 JSON: {exc}\n原文前 200 字: {text[:200]}") from exc
         raise ProviderError(f"LLM 返回无法解析的内容: {text[:200]}")
+
+
+def _repair_truncated(raw: str) -> dict | None:
+    """尝试修复被截断的 JSON：在末尾补齐数组/对象闭合括号。
+
+    例如 `{"outline": [{...}, {...},` → 补 `]}` 后解析成功。
+    仅用于兜底；优先依赖重试拿到完整输出。
+    """
+    stripped = raw.rstrip().rstrip(", ")
+    if not stripped:
+        return None
+    # 依次尝试：数组内截断补 }]}、对象内截断补 }
+    for cand in (stripped + "]}", stripped + "}"):
+        try:
+            return json.loads(cand)
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
+def _json_call(messages: list[dict], *, seed: int | None, max_tokens: int | None = None,
+               retries: int = 2) -> dict:
+    """JSON 模式调用并解析；解析失败自动换 seed 重试。
+
+    DeepSeek json_object 模式偶发输出截断/非 JSON 内容，换 seed 重试
+    通常能拿到完整结果（任务级重试 seed 不变，必须在此变化）。
+    """
+    last: Exception | None = None
+    for attempt in range(retries):
+        try:
+            text = _chat(messages, json_mode=True, seed=(seed or 0) + attempt * 1000,
+                         max_tokens=max_tokens)
+            return _extract_json(text)
+        except ProviderError as exc:
+            last = exc
+            logger.warning("DeepSeek JSON 解析失败（第 %d/%d 次）：%s",
+                           attempt + 1, retries, exc)
+    raise ProviderError(str(last)) from last
 
 
 def _sys(role: str) -> str:
@@ -140,9 +183,9 @@ def _gen_outline(genre: str, setting: str, protagonist: str,
         f"严格输出 JSON，格式："
         f'{{"outline": [{{"no": 章节序号从1开始, "title": "第X章 四字标题", '
         f'"summary": "本章剧情概要，50字左右"}}]}}，共 {chapter_count} 条。')
-    data = _extract_json(_chat([{"role": "system", "content": _sys("novel")},
-                                {"role": "user", "content": prompt}],
-                               json_mode=True, seed=seed))
+    data = _json_call([{"role": "system", "content": _sys("novel")},
+                       {"role": "user", "content": prompt}],
+                      seed=seed, max_tokens=2000)
     outline = data.get("outline") or []
     if not outline:
         raise ProviderError("DeepSeek 未返回大纲")
@@ -161,9 +204,9 @@ def _gen_characters(genre: str, protagonist: str, seed: int) -> list[dict]:
         f"要求：共 4-5 人，包含主角/对手/挚友/关键配角等，每人给出外貌与性格描述。\n"
         f'严格输出 JSON：{{"characters": [{{"name": "名字", "role": "主角/对手/挚友/关键配角/神秘人物", '
         f'"desc": "外貌+性格，50字左右"}}]}}')
-    data = _extract_json(_chat([{"role": "system", "content": _sys("novel")},
-                                {"role": "user", "content": prompt}],
-                               json_mode=True, seed=seed))
+    data = _json_call([{"role": "system", "content": _sys("novel")},
+                       {"role": "user", "content": prompt}],
+                      seed=seed, max_tokens=1000)
     chars = data.get("characters") or []
     if not chars:
         return [{"name": protagonist or "主角", "role": "主角",
@@ -217,9 +260,9 @@ def generate_scenes(novel_title: str, chapters: list[dict], seed: int
         f'{{"scenes": [{{"scene_no":1,"location":"","time":"","emotion":"","summary":"",'
         f'"beats":[{{"character":"","dialogue":"","narration":"","action":"","emotion":""}}]}}], '
         f'"emotion_curve": [{{"scene_no":1,"emotion":"","intensity":5}}]}}')
-    data = _extract_json(_chat([{"role": "system", "content": _sys("script")},
-                                {"role": "user", "content": prompt}],
-                               json_mode=True, seed=seed, max_tokens=8000))
+    data = _json_call([{"role": "system", "content": _sys("script")},
+                       {"role": "user", "content": prompt}],
+                      seed=seed, max_tokens=8000)
     scenes = data.get("scenes") or []
     curve = data.get("emotion_curve") or [
         {"scene_no": s["scene_no"], "emotion": s.get("emotion", "铺垫"),
@@ -252,9 +295,9 @@ def generate_shots(scenes: list[dict], target_count: int, style_id: str,
         f"严格输出 JSON："
         f'{{"shots": [{{"shot_no":1,"scene_no":1,"shot_type":"近景","camera_move":"推",'
         f'"duration":4.0,"prompt_zh":"","dialogue":"","narration":"","transition":"切"}}]}}')
-    data = _extract_json(_chat([{"role": "system", "content": _sys("shot")},
-                                {"role": "user", "content": prompt}],
-                               json_mode=True, seed=seed, max_tokens=8000))
+    data = _json_call([{"role": "system", "content": _sys("shot")},
+                       {"role": "user", "content": prompt}],
+                      seed=seed, max_tokens=8000)
     shots = data.get("shots") or []
     if not shots:
         raise ProviderError("DeepSeek 未返回分镜表")

@@ -17,6 +17,7 @@ import httpx
 from ...config import settings
 from ...storage import save_bytes
 from ..base import ProviderError
+from .. import prompt_builder
 
 logger = logging.getLogger("manju.gateway.wanxiang")
 
@@ -38,25 +39,33 @@ def _headers() -> dict:
     return {"Authorization": f"Bearer {settings.DASHSCOPE_API_KEY}"}
 
 
-def _submit_text2image(prompt: str, size: str, n: int = 1) -> str:
-    """提交文生图异步任务，返回 task_id。"""
+def _submit_text2image(prompt: str, size: str, n: int = 1, max_retries: int = 5) -> str:
+    """提交文生图异步任务，返回 task_id。429 限流时自动等待重试。"""
     url = f"{settings.DASHSCOPE_BASE_URL.rstrip('/')}/api/v1/services/aigc/text2image/image-synthesis"
     body = {
         "model": settings.DASHSCOPE_IMAGE_MODEL,
         "input": {"prompt": prompt},
         "parameters": {"size": size, "n": n},
     }
-    try:
-        resp = _get_client().post(url, headers={**_headers(), "Content-Type": "application/json",
-                                                "X-DashScope-Async": "enable"}, json=body)
-        resp.raise_for_status()
-        task_id = resp.json()["output"]["task_id"]
-        return task_id
-    except httpx.HTTPStatusError as exc:
-        raise ProviderError(
-            f"通义万相提交失败 HTTP {exc.response.status_code}: {exc.response.text[:300]}") from exc
-    except (httpx.HTTPError, KeyError, ValueError) as exc:
-        raise ProviderError(f"通义万相提交失败: {exc}") from exc
+    headers = {**_headers(), "Content-Type": "application/json",
+               "X-DashScope-Async": "enable"}
+    for attempt in range(max_retries):
+        try:
+            resp = _get_client().post(url, headers=headers, json=body)
+            if resp.status_code == 429:
+                wait = 15 * (attempt + 1)  # 15, 30, 45, 60, 75 秒递增退避
+                logger.warning("通义万相限流（429），%ds 后重试（第 %d/%d 次）",
+                               wait, attempt + 1, max_retries)
+                time.sleep(wait)
+                continue
+            resp.raise_for_status()
+            return resp.json()["output"]["task_id"]
+        except httpx.HTTPStatusError as exc:
+            raise ProviderError(
+                f"通义万相提交失败 HTTP {exc.response.status_code}: {exc.response.text[:300]}") from exc
+        except (httpx.HTTPError, KeyError, ValueError) as exc:
+            raise ProviderError(f"通义万相提交失败: {exc}") from exc
+    raise ProviderError(f"通义万相限流，已重试 {max_retries} 次仍失败（请稍后再试）")
 
 
 def _wait_task(task_id: str, timeout: float, interval: float) -> list[str]:
@@ -105,6 +114,7 @@ def _download(url: str) -> str:
 
 def _gen_image(prompt: str, size: str = "720*1280") -> str:
     """一次文生图完整流程（提交 → 轮询 → 下载第一张）。"""
+    time.sleep(1.5)  # 提交间隔，降低请求频率避免厂商 API 限流（429）
     task_id = _submit_text2image(prompt, size)
     urls = _wait_task(task_id, settings.AI_IMAGE_TASK_TIMEOUT, settings.AI_TASK_POLL_INTERVAL)
     return _download(urls[0])
@@ -117,15 +127,14 @@ def _style_hint() -> str:
 
 # ---------- 对外 API（与 mock_image 同名同签名） ----------
 def generate_character_ref(character_name: str, appearance: str, seed: int) -> str:
-    prompt = (f"漫画角色三视图参考图（正面/侧面/背面），角色名：{character_name}，"
-              f"外貌特征：{appearance}，全身像，角色设计稿风格，"
-              f"纯色浅灰背景，{_style_hint()}")
+    """生成单张角色三视图候选图（正面/侧面/背面）。用于候选抽卡，不同 seed 产出不同变体。"""
+    prompt = prompt_builder.character_threeview(character_name, appearance)
     return _gen_image(prompt, size="1024*1024")
 
 
-def generate_expression(character_name: str, emotion: str, seed: int) -> str:
-    prompt = (f"漫画角色表情特写，角色：{character_name}，情绪：{emotion}，"
-              f"面部特写，夸张动画表情，上半身肖像，{_style_hint()}")
+def generate_expression(character_name: str, appearance: str, emotion: str, seed: int) -> str:
+    """生成角色表情候选图。使用与选中三视图相同的 seed + 详细外貌描述，增强角色一致性。"""
+    prompt = prompt_builder.character_expression(character_name, appearance, emotion)
     return _gen_image(prompt, size="1024*1024")
 
 

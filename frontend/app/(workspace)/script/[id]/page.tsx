@@ -6,7 +6,12 @@ import { api, waitForTask } from '@/lib/api';
 import { useStudioStore } from '@/store/useStudioStore';
 import { useConfirmGate } from '@/lib/useConfirmGate';
 import { Badge, Button, Card, EmptyState, Spinner, statusTone } from '@/components/ui';
-import type { Novel, Script } from '@/lib/types';
+import type { Novel, Script, ScriptScene } from '@/lib/types';
+
+const EMOTION_TONE: Record<string, string> = {
+  '爽点': 'success', '虐点': 'danger', '反转': 'brand', '高潮': 'warning',
+  '铺垫': 'default',
+};
 
 function EmotionCurve({ curve }: { curve: Script['emotion_curve'] }) {
   if (!curve.length) return null;
@@ -165,6 +170,26 @@ export default function ScriptPage({ params }: { params: { id: string } }) {
         </div>
       )}
 
+      {/* 结构化剧本场景列表 */}
+      {script?.status === 'completed' && script.scenes?.length > 0 && (
+        <Card className="p-4">
+          <div className="flex items-center justify-between mb-3">
+            <span className="section-title">剧本分场（{script.scenes.length} 场）</span>
+            <span className="text-tertiary text-[11px]">{script.title}</span>
+          </div>
+          <div className="space-y-3">
+            {script.scenes.map((sc) => (
+              <SceneCard key={sc.scene_no} scene={sc} />
+            ))}
+          </div>
+        </Card>
+      )}
+      {script && script.status !== 'completed' && (
+        <Card className="p-4">
+          <EmptyState title="剧本尚未结构化" hint="先生成小说，再点击「结构化为剧本」按钮" />
+        </Card>
+      )}
+
       {/* 情绪曲线 */}
       {script?.emotion_curve && (
         <Card className="p-4">
@@ -176,6 +201,53 @@ export default function ScriptPage({ params }: { params: { id: string } }) {
           </div>
           <EmotionCurve curve={script.emotion_curve} />
         </Card>
+      )}
+    </div>
+  );
+}
+
+/** 场景卡片：场景号 / 地点·时间 / 情绪标签 / 概要 / 节拍列表（角色·对白·旁白·动作·情绪） */
+function SceneCard({ scene }: { scene: ScriptScene }) {
+  const [expanded, setExpanded] = useState(true);
+  const tone = EMOTION_TONE[scene.emotion] ?? 'default';
+  return (
+    <div className="rounded-sm border border-subtle bg-elevated/30 overflow-hidden">
+      {/* 场景头部 */}
+      <div
+        className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-elevated/60 transition-colors"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        <span className="num text-[11px] text-tertiary shrink-0">#{scene.scene_no}</span>
+        <span className="text-[13px] flex-1 truncate">
+          📍 {scene.location || '未知地点'} · 🕐 {scene.time || '未知时间'}
+        </span>
+        <Badge tone={tone as 'success'}>{scene.emotion || '铺垫'}</Badge>
+        <span className="text-tertiary text-[11px] shrink-0">{expanded ? '▾' : '▸'}</span>
+      </div>
+
+      {/* 场景概要 */}
+      {expanded && (
+        <div className="px-3 pb-3 pt-1">
+          <p className="text-[12px] text-secondary leading-relaxed mb-2">{scene.summary}</p>
+
+          {/* 节拍列表 */}
+          {scene.beats?.length > 0 && (
+            <div className="space-y-1.5 mt-2">
+              <span className="text-tertiary text-[10px] tracking-wider">节拍</span>
+              {scene.beats.map((b, i) => (
+                <div key={i} className="pl-3 border-l-2 border-brand-purple/30 text-[12px] leading-relaxed">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-primary font-medium">{b.character || '旁白'}</span>
+                    {b.emotion && <span className="text-tertiary text-[10px]">[{b.emotion}]</span>}
+                  </div>
+                  {b.dialogue && <p className="text-secondary mt-0.5">「{b.dialogue}」</p>}
+                  {b.narration && <p className="text-tertiary italic mt-0.5">（{b.narration}）</p>}
+                  {b.action && <p className="text-tertiary text-[11px] mt-0.5">动作：{b.action}</p>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

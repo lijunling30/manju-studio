@@ -15,6 +15,8 @@ export default function ConfirmCard() {
   const [editing, setEditing] = useState(false);
   const [sessionOff, setSessionOff] = useState(false);
   const [left, setLeft] = useState(60);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // 60s 未操作自动取消（5.0.1：不产生费用）
@@ -23,6 +25,8 @@ export default function ConfirmCard() {
     setLeft(60);
     setCorrection('');
     setEditing(false);
+    setSubmitting(false);
+    setError('');
     timerRef.current = setInterval(() => {
       setLeft((t) => {
         if (t <= 1) {
@@ -46,6 +50,20 @@ export default function ConfirmCard() {
   const onCancel = async () => {
     await api.post(`/api/ai/requests/${payload.reqId}/cancel`).catch(() => {});
     close();
+  };
+
+  /** 确认执行：防重复点击 + 错误捕获（execute 失败时卡片不关闭，显示错误） */
+  const onConfirmClick = async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    setError('');
+    try {
+      await payload.onConfirm();
+      // onConfirm 成功时会 closeConfirmCard → 组件卸载，无需重置 submitting
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '执行失败，请重试');
+      setSubmitting(false);
+    }
   };
 
   const onSessionOff = async (v: boolean) => {
@@ -105,10 +123,19 @@ export default function ConfirmCard() {
           </div>
         ) : (
           <div className="flex gap-2 mt-4">
-            <Button variant="ghost" onClick={() => setEditing(true)}>修改</Button>
-            <Button variant="ghost" onClick={onCancel}>放弃</Button>
+            <Button variant="ghost" onClick={() => setEditing(true)} disabled={submitting}>修改</Button>
+            <Button variant="ghost" onClick={onCancel} disabled={submitting}>放弃</Button>
             <div className="flex-1" />
-            <Button onClick={() => payload.onConfirm()}>确认执行</Button>
+            <Button onClick={onConfirmClick} disabled={submitting}>
+              {submitting ? '执行中…' : '确认执行'}
+            </Button>
+          </div>
+        )}
+
+        {/* 执行错误反馈（execute 失败时卡片不关闭，显示错误供用户重试或放弃） */}
+        {error && (
+          <div className="mt-3 p-2 rounded-sm text-[12px]" style={{ background: 'rgba(229,72,77,0.1)', color: 'var(--danger, #E5484D)' }}>
+            {error}
           </div>
         )}
 

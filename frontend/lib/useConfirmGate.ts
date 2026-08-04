@@ -38,11 +38,18 @@ export function useConfirmGate() {
       highRisk: highRisk(req),
       confirmRound: req.confirm_round,
       onConfirm: async () => {
+        // 1. confirm + execute（若失败则抛错给 ConfirmCard 显示，卡片不关闭）
         await api.post(`/api/ai/requests/${req.id}/confirm`);
         const dispatch = await api.post<Record<string, unknown>>(`/api/ai/requests/${req.id}/execute`);
-        await opts.onDispatched?.(req);
-        await opts.onTaskCreated?.(dispatch);
+        // 2. 立即关闭卡片——任务轮询在后台异步进行，不让用户干等
         closeConfirmCard();
+        // 3. 后台执行回调（load + 任务轮询），不阻塞 UI
+        (async () => {
+          try {
+            await opts.onDispatched?.(req);
+            await opts.onTaskCreated?.(dispatch);
+          } catch { /* 后台回调失败由任务中心反馈，不影响 UI */ }
+        })();
       },
       onReject: async (correction?: string) => {
         await api.post(`/api/ai/requests/${req.id}/reject?correction=${encodeURIComponent(correction ?? '')}`);
