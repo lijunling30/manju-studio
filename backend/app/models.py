@@ -133,6 +133,7 @@ class Keyframe(Base):
     shot_id = Column(Integer, ForeignKey("shot.id"), index=True)
     project_id = Column(Integer, ForeignKey("project.id"), index=True)
     image_url = Column(String(512), default="")
+    source_url = Column(String(512), default="")          # 万相原始公网URL，供图生视频直接使用（绕过公网穿透）
     vendor = Column(String(32), default="")
     model = Column(String(32), default="")
     score = Column(JSON, default=dict)                  # {composition, consistency, clarity, overall}

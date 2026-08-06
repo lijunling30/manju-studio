@@ -153,12 +153,13 @@ class Gateway:
         return mock_image.generate_expression(name, emotion, seed)
 
     def keyframe(self, shot_no: int, scene_desc: str, prompt_zh: str, char_names: list[str],
-                 seed: int, round_no: int, model_overrides: dict | None = None) -> str:
+                 seed: int, round_no: int, model_overrides: dict | None = None) -> tuple[str, str]:
         if not settings.MOCK_MODE:
             return wanxiang_image.generate_keyframe(shot_no, scene_desc, prompt_zh,
                                                     char_names, seed, round_no,
                                                     model=self._model(model_overrides, "image_model"))
-        return mock_image.generate_keyframe(shot_no, scene_desc, prompt_zh, char_names, seed, round_no)
+        url = mock_image.generate_keyframe(shot_no, scene_desc, prompt_zh, char_names, seed, round_no)
+        return url, url   # mock 无公网URL，用本地URL占位
 
     def video(self, keyframe_rel: str, duration: float, vendor: str, seed: int,
               fail_times: int = 0, attempt: int = 1,

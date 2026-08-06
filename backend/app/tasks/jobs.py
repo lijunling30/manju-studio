@@ -84,10 +84,12 @@ async def run_video(vt_id: int) -> None:
                     raise ProviderError("该镜头尚无关键帧，请先完成关键帧抽卡")
                 seed = shot.shot_no * 1000 + vt.retry_count if shot else vt.id
                 # 真实模式：图生视频为网络调用（提交+轮询），to_thread 避免阻塞事件循环
+                # 优先用万相原始公网URL（绕过公网穿透依赖），无则回退本地相对路径
+                kf_url = keyframe.source_url or keyframe.image_url
                 vt.progress = 20
                 db.commit()
                 result = await asyncio.to_thread(
-                    gateway.video, keyframe.image_url, duration, vt.vendor, seed,
+                    gateway.video, kf_url, duration, vt.vendor, seed,
                     fail_times, attempt,
                     model_overrides=params.get("_model_overrides"))
                 vt.result_url = result["video_url"]
@@ -248,11 +250,12 @@ async def _job_keyframe(db: Session, tr: TaskRecord) -> None:
     for i in range(count):
         seed = shot.id * 100 + round_no * 10 + i
         # 真实模式为网络调用（通义万相异步任务），to_thread 避免阻塞事件循环
-        url = await asyncio.to_thread(
+        local_url, source_url = await asyncio.to_thread(
             gateway.keyframe, shot.shot_no, shot.prompt_zh[:40], shot.prompt_zh,
             char_names, seed, round_no,
             model_overrides=p.get("_model_overrides"))
-        kf = Keyframe(shot_id=shot.id, project_id=shot.project_id, image_url=url,
+        kf = Keyframe(shot_id=shot.id, project_id=shot.project_id, image_url=local_url,
+                      source_url=source_url,
                       vendor=vendor, model=model, score=_mock_score(seed),
                       is_approved=False, round=round_no,
                       cost=round(cost_model.unit_price("image", vendor), 4))

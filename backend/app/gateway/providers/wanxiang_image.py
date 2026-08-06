@@ -34,11 +34,11 @@ def _get_client() -> httpx.Client:
 
 
 def _headers() -> dict:
-    if not settings.DASHSCOPE_API_KEY:
+    if not settings.image_api_key:
         raise ProviderError(
             "未配置 DASHSCOPE_API_KEY：请在 backend/.env 填写阿里云百炼 API Key "
             "（或保持 MOCK_MODE=true 使用模拟模式）")
-    return {"Authorization": f"Bearer {settings.DASHSCOPE_API_KEY}",
+    return {"Authorization": f"Bearer {settings.image_api_key}",
             "Content-Type": "application/json"}
 
 
@@ -80,15 +80,16 @@ def _extract_image_url(resp_json: dict) -> str:
     raise ProviderError(f"万相 2.7 响应未包含图片 URL：{str(resp_json)[:300]}")
 
 
-def _gen_image(prompt: str, size: str = "2K", max_retries: int = 3,
-               model: str | None = None) -> str:
-    """调用万相 2.7 同步文生图，下载结果图到本地 storage，返回相对 URL。
+def _gen_image(prompt: str, size: str = "2K", max_retries: int = 5,
+               model: str | None = None) -> tuple[str, str]:
+    """调用万相 2.7 同步文生图，下载结果图到本地 storage。
 
+    返回 (本地相对URL, 万相原始公网URL)。公网URL供图生视频直接使用，绕过公网穿透依赖。
     size: "1K" / "2K" / "4K"（wan2.7-image-pro 文生图支持 4K）
     model: None 时用 .env 默认模型；可传 wan2.7-image / wan2.7-image-pro
     429 限流时指数退避重试。
     """
-    url = f"{settings.DASHSCOPE_BASE_URL.rstrip('/')}/api/v1/services/aigc/multimodal-generation/generation"
+    url = f"{settings.image_base_url.rstrip('/')}/api/v1/services/aigc/multimodal-generation/generation"
     body = {
         "model": model or settings.DASHSCOPE_IMAGE_MODEL,
         "input": {
@@ -111,7 +112,7 @@ def _gen_image(prompt: str, size: str = "2K", max_retries: int = 3,
                 continue
             resp.raise_for_status()
             img_url = _extract_image_url(resp.json())
-            return _download(img_url)
+            return _download(img_url), img_url   # (本地相对URL, 万相原始公网URL)
         except httpx.HTTPStatusError as exc:
             last_err = exc
             if resp.status_code == 429:
@@ -151,20 +152,27 @@ def generate_character_ref(character_name: str, appearance: str, seed: int,
                            model: str | None = None) -> str:
     """生成单张角色三视图候选图（正面/侧面/背面）。用于候选抽卡，不同 seed 产出不同变体。"""
     prompt = prompt_builder.character_threeview(character_name, appearance)
-    return _gen_image(prompt, size="2K", model=model)
+    local, _src = _gen_image(prompt, size="2K", model=model)
+    return local
 
 
 def generate_expression(character_name: str, appearance: str, emotion: str, seed: int,
                         model: str | None = None) -> str:
     """生成角色表情候选图。使用与选中三视图相同的 seed + 详细外貌描述，增强角色一致性。"""
     prompt = prompt_builder.character_expression(character_name, appearance, emotion)
-    return _gen_image(prompt, size="2K", model=model)
+    local, _src = _gen_image(prompt, size="2K", model=model)
+    return local
 
 
 def generate_keyframe(shot_no: int, scene_desc: str, prompt_zh: str, char_names: list[str],
-                      seed: int, round_no: int, model: str | None = None) -> str:
+                      seed: int, round_no: int, model: str | None = None) -> tuple[str, str]:
+    """生成关键帧，返回 (本地相对URL, 万相原始公网URL)。
+
+    公网URL供图生视频(i2v)直接使用，使本地开发环境无需配置 STORAGE_PUBLIC_BASE 公网穿透。
+    """
     chars = "、".join(char_names[:3]) or "主角"
     prompt = (f"{prompt_zh}。角色：{chars}。竖屏 9:16 漫画关键帧构图，"
               f"远景环境交代+主体动作清晰，漫画分镜风格，电影级光影，"
               f"高清细节，构图考究，色彩明快，符合国漫审美，无文字水印")
-    return _gen_image(prompt, size="2K", model=model)
+    local, source = _gen_image(prompt, size="2K", model=model)
+    return local, source

@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     DASHSCOPE_BASE_URL: str = "https://token-plan.cn-beijing.maas.aliyuncs.com"
     DASHSCOPE_IMAGE_MODEL: str = "wan2.7-image-pro"     # 万相 2.7 文生图
     DASHSCOPE_VIDEO_MODEL: str = "happyhorse-1.1-i2v"   # HappyHorse 1.1 图生视频
+    # 按量计费 Key（图像/视频专用，避免套餐 sk-sp- 的 QPS 限流）
+    # 配置后图像/视频走 dashscope.aliyuncs.com 通用域名，按调用量计费；TTS 仍用套餐 Key
+    DASHSCOPE_PAY_API_KEY: str = ""
+    DASHSCOPE_PAY_BASE_URL: str = "https://dashscope.aliyuncs.com"
 
     # 真实调用超时与轮询节奏（秒）
     AI_HTTP_TIMEOUT: float = 120.0        # 单次 HTTP 请求超时（文本生成长时响应）
@@ -87,6 +91,16 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+
+    @property
+    def image_api_key(self) -> str:
+        """图像/视频实际使用的 API Key：优先按量计费，回退套餐。"""
+        return self.DASHSCOPE_PAY_API_KEY or self.DASHSCOPE_API_KEY
+
+    @property
+    def image_base_url(self) -> str:
+        """图像/视频实际使用的域名：按量计费用 dashscope.aliyuncs.com 通用域名。"""
+        return self.DASHSCOPE_PAY_BASE_URL if self.DASHSCOPE_PAY_API_KEY else self.DASHSCOPE_BASE_URL
 
     @property
     def video_vendors(self) -> list[str]:

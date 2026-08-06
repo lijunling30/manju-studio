@@ -41,11 +41,11 @@ def _get_client() -> httpx.Client:
 
 
 def _headers() -> dict:
-    if not settings.DASHSCOPE_API_KEY:
+    if not settings.image_api_key:
         raise ProviderError(
             "未配置 DASHSCOPE_API_KEY：请在 backend/.env 填写阿里云百炼 API Key "
             "（或保持 MOCK_MODE=true 使用模拟模式）")
-    return {"Authorization": f"Bearer {settings.DASHSCOPE_API_KEY}"}
+    return {"Authorization": f"Bearer {settings.image_api_key}"}
 
 
 def _public_url(keyframe_rel: str) -> str:
@@ -61,7 +61,7 @@ def _submit_video(img_url: str, prompt: str, duration: int,
                   ratio: str = "9:16", resolution: str = "720P",
                   model: str | None = None) -> str:
     """提交 HappyHorse 图生视频异步任务，返回 task_id。"""
-    url = f"{settings.DASHSCOPE_BASE_URL.rstrip('/')}/api/v1/services/aigc/video-generation/video-synthesis"
+    url = f"{settings.image_base_url.rstrip('/')}/api/v1/services/aigc/video-generation/video-synthesis"
     body = {
         "model": model or settings.DASHSCOPE_VIDEO_MODEL,
         "input": {
@@ -93,7 +93,7 @@ def _submit_video(img_url: str, prompt: str, duration: int,
 
 def _wait_task(task_id: str, timeout: float, interval: float) -> str:
     """轮询直至成功，返回成片 URL；失败抛 ProviderError。"""
-    url = f"{settings.DASHSCOPE_BASE_URL.rstrip('/')}/api/v1/tasks/{task_id}"
+    url = f"{settings.image_base_url.rstrip('/')}/api/v1/tasks/{task_id}"
     deadline = time.time() + timeout
     while time.time() < deadline:
         time.sleep(interval)
@@ -133,7 +133,8 @@ def generate_video(keyframe_rel: str, duration: float, vendor: str, seed: int,
 
     # HappyHorse 支持 3-15 秒整数时长
     clip = max(3, min(15, int(round(duration))))
-    img_url = _public_url(keyframe_rel)
+    # 若传入的已是公网URL（万相关键帧原始URL，本地开发无需 STORAGE_PUBLIC_BASE），直接用；否则转公网
+    img_url = keyframe_rel if keyframe_rel.startswith("http") else _public_url(keyframe_rel)
     task_id = _submit_video(img_url, "镜头运动自然，主体连贯，电影感运镜", clip,
                             model=model)
     video_url = _wait_task(task_id, settings.AI_VIDEO_TASK_TIMEOUT,

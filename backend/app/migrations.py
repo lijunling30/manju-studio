@@ -37,3 +37,5 @@ def run_migrations() -> None:
     # v1.3.0：User 增加 model_setting 字段（模型服务偏好）
     # SQLite ALTER TABLE 不支持 NOT NULL 无默认值，故带 DEFAULT '{}'
     _ensure_column("user", "model_setting", "JSON", "'{}'")
+    # v1.3.1：Keyframe 增加 source_url 字段（万相原始公网URL，供图生视频绕过公网穿透）
+    _ensure_column("keyframe", "source_url", "VARCHAR(512)", "''")

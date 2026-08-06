@@ -18,7 +18,7 @@ from .jobs import run_record, run_video
 logger = logging.getLogger("manju.worker")
 
 _STUCK_MINUTES = 30
-_MAX_CONCURRENT_RECORDS = 3  # 限制并发任务数，避免厂商 API 限流
+_MAX_CONCURRENT_RECORDS = 2  # 按量计费 key 限流宽松，允许 2 并发提速
 
 
 class Worker:
