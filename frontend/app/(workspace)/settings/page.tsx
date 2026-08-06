@@ -1,11 +1,11 @@
-/* 设置页（P-14）：主题 / 确认闸口三级开关 / 快捷键 / 账号 */
+/* 设置页（P-14）：主题 / 模型服务 / 确认闸口三级开关 / 快捷键 / 账号 */
 'use client';
 
 import { useEffect, useState } from 'react';
 import { api, clearToken, sessionId } from '@/lib/api';
 import { useStudioStore, type ThemeMode } from '@/store/useStudioStore';
-import { Badge, Button, Card } from '@/components/ui';
-import type { GateSetting, User } from '@/lib/types';
+import { Badge, Button, Card, Field, Select } from '@/components/ui';
+import type { GateSetting, ModelCatalog, ModelSetting, User } from '@/lib/types';
 
 const MODULES = [
   { key: 'novel', label: '小说生成' },
@@ -19,15 +19,32 @@ const MODULES = [
   { key: 'compliance', label: '合规检验' },
 ];
 
+// 模型设置中各字段对应的 catalog key
+const MODEL_FIELDS: { key: keyof ModelSetting; catalogKey: string; label: string; hint: string }[] = [
+  { key: 'text_model', catalogKey: 'text', label: '文本模型', hint: '小说 / 剧本 / 分镜' },
+  { key: 'image_model', catalogKey: 'image', label: '图像模型', hint: '角色三视图 / 表情 / 关键帧' },
+  { key: 'video_model', catalogKey: 'video', label: '视频模型', hint: '图生视频 / 参考生视频' },
+  { key: 'tts_model', catalogKey: 'tts', label: 'TTS 模型', hint: '语音合成' },
+  { key: 'tts_voice', catalogKey: 'tts_voice', label: 'TTS 音色', hint: '配音音色' },
+];
+
 export default function SettingsPage() {
   const theme = useStudioStore((s) => s.theme);
   const setTheme = useStudioStore((s) => s.setTheme);
   const [gate, setGate] = useState<GateSetting | null>(null);
   const [me, setMe] = useState<User | null>(null);
+  const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
+  const [modelSetting, setModelSetting] = useState<ModelSetting | null>(null);
+  const [modelSaving, setModelSaving] = useState(false);
+  const [modelSaved, setModelSaved] = useState(false);
 
   useEffect(() => {
     api.get<GateSetting>(`/api/ai/settings/gate?session_id=${sessionId()}`).then(setGate).catch(() => {});
     api.get<User>('/api/auth/me').then(setMe).catch(() => {});
+    api.get<ModelCatalog>('/api/settings/models').then((data) => {
+      setCatalog(data);
+      setModelSetting(data.current);
+    }).catch(() => {});
   }, []);
 
   const saveGate = async (patch: Partial<GateSetting>) => {
@@ -40,6 +57,23 @@ export default function SettingsPage() {
     const cur = gate.modules_disabled ?? [];
     const next = cur.includes(key) ? cur.filter((m) => m !== key) : [...cur, key];
     await saveGate({ modules_disabled: next });
+  };
+
+  const handleModelChange = (key: keyof ModelSetting, value: string) => {
+    if (!modelSetting) return;
+    setModelSetting({ ...modelSetting, [key]: value });
+    setModelSaved(false);
+  };
+
+  const saveModels = async () => {
+    if (!modelSetting) return;
+    setModelSaving(true);
+    try {
+      const updated = await api.put<ModelSetting>('/api/settings/models', modelSetting);
+      setModelSetting(updated);
+      setModelSaved(true);
+    } catch { /* 错误由 api 层处理 */ }
+    setModelSaving(false);
   };
 
   const themes: { key: ThemeMode; label: string; desc: string }[] = [
@@ -71,6 +105,47 @@ export default function SettingsPage() {
           ))}
         </div>
       </Card>
+
+      {/* 模型服务设置 */}
+      {catalog && modelSetting && (
+        <Card className="p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <span className="section-title block">模型服务</span>
+              <p className="text-tertiary text-[11px] mt-1">为每个模块选择具体调用的 AI 模型；空选表示使用系统默认</p>
+            </div>
+            <div className="flex items-center gap-2">
+              {modelSaved && <span className="text-success text-[11px]">✓ 已保存</span>}
+              <Button onClick={saveModels} disabled={modelSaving || modelSaved}>
+                {modelSaving ? '保存中…' : modelSaved ? '已保存' : '保存'}
+              </Button>
+            </div>
+          </div>
+          <div className="space-y-0.5">
+            {MODEL_FIELDS.map(({ key, catalogKey, label, hint }) => {
+              const item = catalog.catalog[catalogKey];
+              const currentValue = modelSetting[key] || catalog.defaults[catalogKey] || '';
+              const isDefault = !modelSetting[key];
+              return (
+                <Field key={key} label={label} hint={hint}>
+                  <div className="flex items-center gap-2">
+                    {isDefault && (
+                      <span className="badge badge-info text-[10px]">默认</span>
+                    )}
+                    <Select value={currentValue} onChange={(v) => handleModelChange(key, v)}>
+                      {/* 空选项 = 使用系统默认 */}
+                      <option value="">{catalog.defaults[catalogKey] ? `系统默认（${catalog.defaults[catalogKey]}）` : '系统默认'}</option>
+                      {item?.models.map((m) => (
+                        <option key={m.id} value={m.id}>{m.label}</option>
+                      ))}
+                    </Select>
+                  </div>
+                </Field>
+              );
+            })}
+          </div>
+        </Card>
+      )}
 
       {/* 确认闸口（5.0.1 三级开关） */}
       <Card className="p-4">

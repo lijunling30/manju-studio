@@ -40,6 +40,7 @@ export interface User {
     high_cost_threshold: number;
     batch_threshold: number;
   };
+  model_setting?: ModelSetting;
 }
 
 export interface Project {
@@ -279,4 +280,30 @@ export interface GateSetting {
   high_cost_threshold: number;
   batch_threshold: number;
   session_disabled: boolean;
+}
+
+// ---------- 模型服务设置 ----------
+export interface ModelOption {
+  id: string;
+  label: string;
+  provider: string;
+}
+
+export interface ModelCatalogItem {
+  label: string;
+  models: ModelOption[];
+}
+
+export interface ModelSetting {
+  text_model: string;
+  image_model: string;
+  video_model: string;
+  tts_model: string;
+  tts_voice: string;
+}
+
+export interface ModelCatalog {
+  catalog: Record<string, ModelCatalogItem>;
+  current: ModelSetting;
+  defaults: Record<string, string>;
 }

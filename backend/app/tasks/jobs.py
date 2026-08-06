@@ -88,7 +88,8 @@ async def run_video(vt_id: int) -> None:
                 db.commit()
                 result = await asyncio.to_thread(
                     gateway.video, keyframe.image_url, duration, vt.vendor, seed,
-                    fail_times, attempt)
+                    fail_times, attempt,
+                    model_overrides=params.get("_model_overrides"))
                 vt.result_url = result["video_url"]
                 vt.preview_url = result["preview_url"]
                 vt.frames = result.get("frames", [])
@@ -200,7 +201,8 @@ async def _job_novel(db: Session, tr: TaskRecord) -> None:
     data = await asyncio.to_thread(
         gateway.generate_novel, p.get("genre") or novel.genre,
         p.get("setting") or "", p.get("protagonist") or "",
-        int(p.get("chapter_count", 4 if p.get("mode") == "continue" else 8)), seed)
+        int(p.get("chapter_count", 4 if p.get("mode") == "continue" else 8)), seed,
+        model_overrides=p.get("_model_overrides"))
 
     if p.get("mode") == "continue":
         base_no = len(novel.chapters)
@@ -248,7 +250,8 @@ async def _job_keyframe(db: Session, tr: TaskRecord) -> None:
         # 真实模式为网络调用（通义万相异步任务），to_thread 避免阻塞事件循环
         url = await asyncio.to_thread(
             gateway.keyframe, shot.shot_no, shot.prompt_zh[:40], shot.prompt_zh,
-            char_names, seed, round_no)
+            char_names, seed, round_no,
+            model_overrides=p.get("_model_overrides"))
         kf = Keyframe(shot_id=shot.id, project_id=shot.project_id, image_url=url,
                       vendor=vendor, model=model, score=_mock_score(seed),
                       is_approved=False, round=round_no,
@@ -285,7 +288,8 @@ async def _job_character(db: Session, tr: TaskRecord) -> None:
     for i in range(candidate_count):
         seed = random.Random(f"{char.id}-{tr.id}-{i}").randint(0, 10 ** 9)
         refs.append(await asyncio.to_thread(
-            gateway.character_ref, char.name, appearance, seed))
+            gateway.character_ref, char.name, appearance, seed,
+            model_overrides=p.get("_model_overrides")))
         tr.progress = min(90, int(90 * (i + 1) / candidate_count))
         db.commit()
     char.ref_images = refs
@@ -328,7 +332,8 @@ async def _job_expression(db: Session, tr: TaskRecord) -> None:
         for vi in range(2):
             seed = base_seed + ei * 100 + vi  # 同情绪变体间 seed 接近
             candidates.append(await asyncio.to_thread(
-                gateway.expression, char.name, appearance, emotion, seed))
+                gateway.expression, char.name, appearance, emotion, seed,
+                model_overrides=p.get("_model_overrides")))
             tr.progress = min(95, int(95 * (len(candidates)) / 8))
             db.commit()
     char.expression_candidates = candidates
@@ -378,7 +383,8 @@ async def _job_audio(db: Session, tr: TaskRecord) -> None:
         # 对白配音
         if shot.dialogue:
             duration = max(2.0, min(8.0, shot.duration))
-            url = gateway.voice(shot.dialogue, voice_id, "中性", duration, seed + shot.id)
+            url = gateway.voice(shot.dialogue, voice_id, "中性", duration, seed + shot.id,
+                                model_overrides=p.get("_model_overrides"))
             db.add(AudioAsset(shot_id=shot.id, project_id=project.id, type="voice",
                               asset_url=url, character_id=(shot.char_ref_ids or [0])[0],
                               voice_id=voice_id, emotion="中性", text=shot.dialogue,

@@ -24,6 +24,10 @@ manju_launcher.log
 # ---- IDE / OS ----
 .idea/
 .vscode/
+.trae/
 .DS_Store
 Thumbs.db
 *.log
+
+# ---- 本地临时验证脚本（连通性测试，打印 key 前缀，不纳入版本库） ----
+backend/test_*.py

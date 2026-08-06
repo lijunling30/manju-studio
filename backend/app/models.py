@@ -19,6 +19,7 @@ class User(Base):
     plan = Column(String(16), default="personal")       # personal / team / enterprise
     budget_limit = Column(Float, default=0.0)           # 0 = 不限制
     gate_setting = Column(JSON, default=dict)           # 确认闸口偏好（全局/模块级）
+    model_setting = Column(JSON, default=dict)          # 模型服务偏好（各模块选用的模型，空=用.env默认）
     created_at = Column(DateTime, default=utcnow)
 
 

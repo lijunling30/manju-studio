@@ -30,6 +30,7 @@ class UserOut(ORMModel):
     plan: str
     budget_limit: float
     gate_setting: dict = {}
+    model_setting: dict = {}
 
 
 class TokenOut(BaseModel):
@@ -399,6 +400,29 @@ class GateSettingOut(BaseModel):
     high_cost_threshold: float
     batch_threshold: int
     session_disabled: bool = False
+
+
+# ---------- 模型服务设置 ----------
+class ModelSettingOut(BaseModel):
+    text_model: str = ""       # 小说/剧本/分镜
+    image_model: str = ""      # 角色三视图/表情/关键帧
+    video_model: str = ""      # 视频生成
+    tts_model: str = ""        # 语音合成
+    tts_voice: str = ""        # TTS 音色
+
+
+class ModelSettingIn(BaseModel):
+    text_model: Optional[str] = None
+    image_model: Optional[str] = None
+    video_model: Optional[str] = None
+    tts_model: Optional[str] = None
+    tts_voice: Optional[str] = None
+
+
+class ModelCatalogOut(BaseModel):
+    catalog: dict               # MODEL_CATALOG 原样返回
+    current: ModelSettingOut    # 当前用户设置
+    defaults: dict              # .env 中的默认模型
 
 
 # ---------- 计费（M10 / A-2） ----------

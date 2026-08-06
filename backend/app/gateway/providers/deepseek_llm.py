@@ -38,16 +38,41 @@ def _get_client() -> httpx.Client:
         return _client
 
 
-def _chat(messages: list[dict], *, json_mode: bool = False,
-          temperature: float = 0.8, max_tokens: int | None = None,
-          seed: int | None = None) -> str:
-    """调用 DeepSeek chat completions，返回文本内容。"""
+def _resolve_endpoint(model: str | None = None) -> tuple[str, str, str]:
+    """根据模型名解析 API endpoint，返回 (model, api_key, base_url)。
+
+    路由规则：
+    - deepseek-* → DeepSeek 官方 API（settings.DEEPSEEK_*）
+    - qwen* / glm* / 其他 → 阿里云百炼 OpenAI 兼容接口（settings.DASHSCOPE_*）
+    - None → 用 .env 默认（DEEPSEEK_MODEL + DEEPSEEK_API_KEY）
+    """
+    if model and not model.startswith("deepseek"):
+        # 阿里云百炼 OpenAI 兼容接口
+        if not settings.DASHSCOPE_API_KEY:
+            raise ProviderError(
+                "未配置 DASHSCOPE_API_KEY：请在 backend/.env 填写阿里云百炼 API Key")
+        base = settings.DASHSCOPE_BASE_URL.rstrip("/")
+        if "/compatible-mode" not in base:
+            base = f"{base}/compatible-mode/v1"
+        return model, settings.DASHSCOPE_API_KEY, base
+    # DeepSeek 官方 API
     if not settings.DEEPSEEK_API_KEY:
         raise ProviderError(
             "未配置 DEEPSEEK_API_KEY：请在 backend/.env 填写 DeepSeek API Key "
             "（或保持 MOCK_MODE=true 使用模拟模式）")
+    return model or settings.DEEPSEEK_MODEL, settings.DEEPSEEK_API_KEY, settings.DEEPSEEK_BASE_URL
+
+
+def _chat(messages: list[dict], *, json_mode: bool = False,
+          temperature: float = 0.8, max_tokens: int | None = None,
+          seed: int | None = None, model: str | None = None) -> str:
+    """调用 LLM chat completions（OpenAI 兼容接口），返回文本内容。
+
+    model 为 None 时用 .env 默认模型；非 deepseek 模型自动走阿里云百炼。
+    """
+    resolved_model, api_key, base_url = _resolve_endpoint(model)
     body: dict = {
-        "model": settings.DEEPSEEK_MODEL,
+        "model": resolved_model,
         "messages": messages,
         "temperature": temperature,
     }
@@ -57,19 +82,19 @@ def _chat(messages: list[dict], *, json_mode: bool = False,
         body["max_tokens"] = max_tokens
     if seed is not None:
         body["seed"] = seed
-    url = f"{settings.DEEPSEEK_BASE_URL.rstrip('/')}/chat/completions"
+    url = f"{base_url.rstrip('/')}/chat/completions"
     try:
         resp = _get_client().post(
-            url, headers={"Authorization": f"Bearer {settings.DEEPSEEK_API_KEY}"},
+            url, headers={"Authorization": f"Bearer {api_key}"},
             json=body)
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
     except httpx.HTTPStatusError as exc:
         raise ProviderError(
-            f"DeepSeek 调用失败 HTTP {exc.response.status_code}: "
+            f"LLM 调用失败 HTTP {exc.response.status_code}: "
             f"{exc.response.text[:300]}") from exc
     except (httpx.HTTPError, KeyError, ValueError, IndexError) as exc:
-        raise ProviderError(f"DeepSeek 调用失败: {exc}") from exc
+        raise ProviderError(f"LLM 调用失败: {exc}") from exc
 
 
 def _extract_json(text: str) -> dict:
@@ -114,7 +139,7 @@ def _repair_truncated(raw: str) -> dict | None:
 
 
 def _json_call(messages: list[dict], *, seed: int | None, max_tokens: int | None = None,
-               retries: int = 2) -> dict:
+               retries: int = 2, model: str | None = None) -> dict:
     """JSON 模式调用并解析；解析失败自动换 seed 重试。
 
     DeepSeek json_object 模式偶发输出截断/非 JSON 内容，换 seed 重试
@@ -124,11 +149,11 @@ def _json_call(messages: list[dict], *, seed: int | None, max_tokens: int | None
     for attempt in range(retries):
         try:
             text = _chat(messages, json_mode=True, seed=(seed or 0) + attempt * 1000,
-                         max_tokens=max_tokens)
+                         max_tokens=max_tokens, model=model)
             return _extract_json(text)
         except ProviderError as exc:
             last = exc
-            logger.warning("DeepSeek JSON 解析失败（第 %d/%d 次）：%s",
+            logger.warning("LLM JSON 解析失败（第 %d/%d 次）：%s",
                            attempt + 1, retries, exc)
     raise ProviderError(str(last)) from last
 
@@ -142,15 +167,16 @@ def _sys(role: str) -> str:
 
 # ==================== 小说生成（M2，真实模式） ====================
 def generate_novel_full(genre: str, setting: str, protagonist: str,
-                        chapter_count: int, seed: int) -> dict:
+                        chapter_count: int, seed: int, model: str | None = None) -> dict:
     """一次完成大纲 + 角色表 + 各章正文（正文并行生成）。
 
     返回 {outline, chapters, characters, tokens}，格式与 mock 版一致。
+    model 为 None 时用 .env 默认文本模型。
     """
     if chapter_count <= 0:
         chapter_count = 1
-    outline = _gen_outline(genre, setting, protagonist, chapter_count, seed)
-    characters = _gen_characters(genre, protagonist, seed)
+    outline = _gen_outline(genre, setting, protagonist, chapter_count, seed, model)
+    characters = _gen_characters(genre, protagonist, seed, model)
 
     briefs = [{"no": o["no"], "title": o["title"], "summary": o["summary"]}
               for o in outline]
@@ -159,14 +185,14 @@ def generate_novel_full(genre: str, setting: str, protagonist: str,
         b["prev_summary"] = briefs[i - 1]["summary"] if i > 0 else ""
 
     with ThreadPoolExecutor(max_workers=min(4, chapter_count)) as pool:
-        futures = [pool.submit(_gen_chapter, b, genre, setting, protagonist, seed)
+        futures = [pool.submit(_gen_chapter, b, genre, setting, protagonist, seed, model)
                    for b in briefs]
         chapters = []
         for f in futures:
             try:
                 chapters.append(f.result())
             except Exception:
-                logger.exception("DeepSeek 生成章节失败")
+                logger.exception("LLM 生成章节失败")
                 raise
     tokens = sum(len(ch["content"]) * 2 for ch in chapters)
     return {"outline": outline, "chapters": chapters,
@@ -174,7 +200,7 @@ def generate_novel_full(genre: str, setting: str, protagonist: str,
 
 
 def _gen_outline(genre: str, setting: str, protagonist: str,
-                 chapter_count: int, seed: int) -> list[dict]:
+                 chapter_count: int, seed: int, model: str | None = None) -> list[dict]:
     prompt = (
         f"请为一部「{genre}」题材的漫画剧本小说创作 {chapter_count} 章的故事大纲。\n"
         f"世界观设定：{setting or '由你构思'}。主角：{protagonist or '由你命名'}。\n"
@@ -185,10 +211,10 @@ def _gen_outline(genre: str, setting: str, protagonist: str,
         f'"summary": "本章剧情概要，50字左右"}}]}}，共 {chapter_count} 条。')
     data = _json_call([{"role": "system", "content": _sys("novel")},
                        {"role": "user", "content": prompt}],
-                      seed=seed, max_tokens=2000)
+                      seed=seed, max_tokens=2000, model=model)
     outline = data.get("outline") or []
     if not outline:
-        raise ProviderError("DeepSeek 未返回大纲")
+        raise ProviderError("LLM 未返回大纲")
     # 规范化字段
     for i, o in enumerate(outline):
         o["no"] = int(o.get("no", i + 1))
@@ -198,7 +224,8 @@ def _gen_outline(genre: str, setting: str, protagonist: str,
     return outline[:chapter_count]
 
 
-def _gen_characters(genre: str, protagonist: str, seed: int) -> list[dict]:
+def _gen_characters(genre: str, protagonist: str, seed: int,
+                    model: str | None = None) -> list[dict]:
     prompt = (
         f"为一部「{genre}」题材的小说设计主要角色表（主角必须是「{protagonist or '待定'}」）。\n"
         f"要求：共 4-5 人，包含主角/对手/挚友/关键配角等，每人给出外貌与性格描述。\n"
@@ -206,7 +233,7 @@ def _gen_characters(genre: str, protagonist: str, seed: int) -> list[dict]:
         f'"desc": "外貌+性格，50字左右"}}]}}')
     data = _json_call([{"role": "system", "content": _sys("novel")},
                        {"role": "user", "content": prompt}],
-                      seed=seed, max_tokens=1000)
+                      seed=seed, max_tokens=1000, model=model)
     chars = data.get("characters") or []
     if not chars:
         return [{"name": protagonist or "主角", "role": "主角",
@@ -218,7 +245,7 @@ def _gen_characters(genre: str, protagonist: str, seed: int) -> list[dict]:
 
 
 def _gen_chapter(brief: dict, genre: str, setting: str, protagonist: str,
-                 seed: int) -> dict:
+                 seed: int, model: str | None = None) -> dict:
     prompt = (
         f"题材：{genre}\n世界观：{setting or '由你延续前文'}\n主角：{protagonist or '沿用前文'}\n"
         f"本章：{brief['title']}（第 {brief['no']} 章）\n本章概要：{brief['summary']}\n"
@@ -229,9 +256,9 @@ def _gen_chapter(brief: dict, genre: str, setting: str, protagonist: str,
     content = _chat([{"role": "system", "content": _sys("novel")},
                      {"role": "user", "content": prompt}],
                     temperature=0.9, max_tokens=8000,
-                    seed=seed + brief["no"] * 17).strip()
+                    seed=seed + brief["no"] * 17, model=model).strip()
     if len(content) < 200:
-        raise ProviderError(f"DeepSeek 章节内容过短（{len(content)} 字）")
+        raise ProviderError(f"LLM 章节内容过短（{len(content)} 字）")
     return {"no": brief["no"], "title": brief["title"], "content": content}
 
 
@@ -246,8 +273,8 @@ def _chapter_briefs(chapters: list[dict]) -> str:
     return "\n".join(parts)
 
 
-def generate_scenes(novel_title: str, chapters: list[dict], seed: int
-                    ) -> tuple[list[dict], list[dict]]:
+def generate_scenes(novel_title: str, chapters: list[dict], seed: int,
+                    model: str | None = None) -> tuple[list[dict], list[dict]]:
     prompt = (
         f"请将小说《{novel_title}》改编为漫画/动画剧本（分场脚本）。\n"
         f"小说内容（每章摘录）：\n{_chapter_briefs(chapters)}\n\n"
@@ -262,7 +289,7 @@ def generate_scenes(novel_title: str, chapters: list[dict], seed: int
         f'"emotion_curve": [{{"scene_no":1,"emotion":"","intensity":5}}]}}')
     data = _json_call([{"role": "system", "content": _sys("script")},
                        {"role": "user", "content": prompt}],
-                      seed=seed, max_tokens=8000)
+                      seed=seed, max_tokens=8000, model=model)
     scenes = data.get("scenes") or []
     curve = data.get("emotion_curve") or [
         {"scene_no": s["scene_no"], "emotion": s.get("emotion", "铺垫"),
@@ -274,13 +301,14 @@ def generate_scenes(novel_title: str, chapters: list[dict], seed: int
     curve = [{"scene_no": int(c["scene_no"]), "emotion": c.get("emotion", "铺垫"),
               "intensity": int(c.get("intensity", 5))} for c in curve]
     if not scenes:
-        raise ProviderError("DeepSeek 未返回剧本分场")
+        raise ProviderError("LLM 未返回剧本分场")
     return scenes, curve
 
 
 # ==================== 分镜设计（M4，真实模式） ====================
 def generate_shots(scenes: list[dict], target_count: int, style_id: str,
-                   char_names: list[str], seed: int) -> list[dict]:
+                   char_names: list[str], seed: int,
+                   model: str | None = None) -> list[dict]:
     scenes_json = json.dumps(scenes[:20], ensure_ascii=False)
     names = "、".join(char_names or ["主角"])
     prompt = (
@@ -297,10 +325,10 @@ def generate_shots(scenes: list[dict], target_count: int, style_id: str,
         f'"duration":4.0,"prompt_zh":"","dialogue":"","narration":"","transition":"切"}}]}}')
     data = _json_call([{"role": "system", "content": _sys("shot")},
                        {"role": "user", "content": prompt}],
-                      seed=seed, max_tokens=8000)
+                      seed=seed, max_tokens=8000, model=model)
     shots = data.get("shots") or []
     if not shots:
-        raise ProviderError("DeepSeek 未返回分镜表")
+        raise ProviderError("LLM 未返回分镜表")
     for i, s in enumerate(shots):
         s["shot_no"] = int(s.get("shot_no", i + 1))
         s["scene_no"] = int(s.get("scene_no", 1))
@@ -318,7 +346,7 @@ def generate_shots(scenes: list[dict], target_count: int, style_id: str,
 
 # ==================== 需求复述（5.0.1 确认卡，真实模式） ====================
 def restate(module: str, params: dict, batch_count: int,
-            correction: str | None = None) -> tuple[str, str]:
+            correction: str | None = None, model: str | None = None) -> tuple[str, str]:
     """真实 LLM 复述需求；失败时降级到模板复述（不影响确认流程）。"""
     try:
         p = params or {}
@@ -333,12 +361,12 @@ def restate(module: str, params: dict, batch_count: int,
                           "content": "你是需求理解助手。用简洁中文回答，"
                                      "第一句是复述的意图，第二句是输出物描述。"},
                          {"role": "user", "content": user_txt}],
-                        temperature=0.3, max_tokens=300)
+                        temperature=0.3, max_tokens=300, model=model)
         lines = [ln.strip() for ln in content.splitlines() if ln.strip()]
         intent = lines[0] if lines else "AI 生成"
         out = lines[1] if len(lines) > 1 else "AI 生成结果"
         return intent[:120], out[:120]
     except ProviderError as exc:
-        logger.warning("DeepSeek 复述失败，降级模板: %s", exc)
+        logger.warning("LLM 复述失败，降级模板: %s", exc)
         from .mock_llm import restate as _mock_restate
         return _mock_restate(module, params, batch_count, correction)

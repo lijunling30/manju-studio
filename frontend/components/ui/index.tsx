@@ -80,3 +80,48 @@ export function EmptyState({ title, hint }: { title: string; hint?: string }) {
     </div>
   );
 }
+
+/** 原生 select 封装（深色主题） */
+export function Select({
+  value,
+  onChange,
+  children,
+  className = '',
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className={`bg-elevated border border-subtle text-primary text-[12px] rounded px-2.5 py-1.5 outline-none focus:border-brand-purple transition-colors ${className}`}
+      style={{ colorScheme: 'dark' }}
+    >
+      {children}
+    </select>
+  );
+}
+
+/** 表单字段：label + 控件 + 可选提示 */
+export function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 py-1.5">
+      <div className="shrink-0">
+        <div className="text-[12px] text-secondary">{label}</div>
+        {hint && <div className="text-tertiary text-[10px] mt-0.5">{hint}</div>}
+      </div>
+      <div className="shrink-0">{children}</div>
+    </div>
+  );
+}

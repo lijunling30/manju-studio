@@ -10,10 +10,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .api import (ai_requests, audio, auth, characters, costs, final_videos,
-                  keyframes, novels, projects, scripts, shots, tasks_api,
-                  video_tasks)
+                  keyframes, model_settings, novels, projects, scripts, shots,
+                  tasks_api, video_tasks)
 from .config import settings
 from .database import Base, engine
+from .migrations import run_migrations
 from .storage import ensure_dirs
 from .tasks.worker import worker
 
@@ -21,6 +22,7 @@ from .tasks.worker import worker
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)   # 建表
+    run_migrations()                        # 老库补列（幂等）
     ensure_dirs()                           # 资产目录
     worker.start()                          # 任务编排 Worker
     yield
@@ -46,7 +48,8 @@ PREFIX = settings.API_PREFIX
 for router in (auth.router, projects.router, novels.router, scripts.router,
                shots.router, characters.router, keyframes.router,
                video_tasks.router, audio.router, final_videos.router,
-               costs.router, ai_requests.router, tasks_api.router):
+               costs.router, ai_requests.router, tasks_api.router,
+               model_settings.router):
     app.include_router(router, prefix=PREFIX)
 
 # 生成资产静态服务（图片/视频/音频）—— 目录须先存在

@@ -53,6 +53,8 @@ def _budget_guard(db: Session, user, project: Project, module: str, params: dict
 def dispatch_job(db: Session, user, module: str, params: dict, req_id: int) -> dict:
     project_id = params.get("project_id")
     project = db.get(Project, project_id) if project_id else None
+    # 用户在"模型服务设置"页配置的模型偏好（空=用.env默认）
+    mo = user.model_setting or {}
 
     if module == "novel":
         if not project:
@@ -63,7 +65,8 @@ def dispatch_job(db: Session, user, module: str, params: dict, req_id: int) -> d
         db.add(novel)
         db.commit()
         tr = TaskRecord(user_id=user.id, project_id=project.id, module="novel",
-                        kind="novel_generate", ref_id=novel.id, params=dict(params),
+                        kind="novel_generate", ref_id=novel.id,
+                        params={**params, "_model_overrides": mo},
                         status="queued")
         db.add(tr)
         db.commit()
@@ -77,7 +80,8 @@ def dispatch_job(db: Session, user, module: str, params: dict, req_id: int) -> d
                                        Novel.status == "completed").order_by(Novel.id.desc()).first()
         if not novel:
             raise ValueError("请先完成小说生成（M2）")
-        data = gateway.generate_script(novel.title, novel.chapters, _seed(project.id, "script"))
+        data = gateway.generate_script(novel.title, novel.chapters, _seed(project.id, "script"),
+                                       model_overrides=mo)
         script = db.query(Script).filter(Script.project_id == project.id).first()
         if not script:
             script = Script(project_id=project.id, novel_id=novel.id, title=f"{novel.title} · 剧本")
@@ -105,7 +109,7 @@ def dispatch_job(db: Session, user, module: str, params: dict, req_id: int) -> d
         char_ids = _char_lookup(db, user.id, project)
         data = gateway.generate_shots(script.scenes, params.get("shot_count", 9),
                                       project.style_id or "默认漫画风格", char_names,
-                                      _seed(project.id, "shot"))
+                                      _seed(project.id, "shot"), model_overrides=mo)
         # 提示词强制携带角色引用 [CHAR:x] 与风格 ID
         prompts, ref_ids, char_token = data["shots"], [], {}
         for i, c in enumerate(char_names):
@@ -136,7 +140,7 @@ def dispatch_job(db: Session, user, module: str, params: dict, req_id: int) -> d
     if module == "character":
         # —— 批量自动生成：从小说角色表提取，AI 自动创建角色资产 ——
         if params.get("auto_generate"):
-            return _auto_generate_characters(db, user, project, params)
+            return _auto_generate_characters(db, user, project, params, mo)
 
         char = db.get(Character, params.get("character_id", 0))
         if not char:
@@ -161,7 +165,7 @@ def dispatch_job(db: Session, user, module: str, params: dict, req_id: int) -> d
         # 生成三视图参考图 + 表情集（异步任务队列：真实模式单张图 10-60s）
         tr = TaskRecord(user_id=user.id, project_id=proj.id if proj else None,
                         module="character", kind="character", ref_id=char.id,
-                        params=dict(params), status="queued")
+                        params={**params, "_model_overrides": mo}, status="queued")
         db.add(tr)
         db.commit()
         return {"kind": "character", "task_id": tr.id, "character_id": char.id}
@@ -172,7 +176,8 @@ def dispatch_job(db: Session, user, module: str, params: dict, req_id: int) -> d
             raise ValueError("分镜不存在")
         _budget_guard(db, user, db.get(Project, shot.project_id), "keyframe", params)
         tr = TaskRecord(user_id=user.id, project_id=shot.project_id, module="keyframe",
-                        kind="keyframe_batch", ref_id=shot.id, params=dict(params),
+                        kind="keyframe_batch", ref_id=shot.id,
+                        params={**params, "_model_overrides": mo},
                         status="queued")
         db.add(tr)
         db.commit()
@@ -189,7 +194,7 @@ def dispatch_job(db: Session, user, module: str, params: dict, req_id: int) -> d
                        model={"vidu_q3": "Q3", "seedance_2_0": "Seedance 2.0",
                               "kling_2_0": "Kling 2.0"}.get(vendor, vendor),
                        duration=params.get("duration", 5.0), status="queued",
-                       params=dict(params))
+                       params={**params, "_model_overrides": mo})
         db.add(vt)
         db.commit()
         return {"kind": "video", "task_id": vt.id, "shot_id": shot.id}
@@ -200,7 +205,8 @@ def dispatch_job(db: Session, user, module: str, params: dict, req_id: int) -> d
             raise ValueError("缺少 project_id")
         _budget_guard(db, user, project, module, params)
         tr = TaskRecord(user_id=user.id, project_id=project.id, module=module,
-                        kind="audio", ref_id=project.id, params=dict(params), status="queued")
+                        kind="audio", ref_id=project.id,
+                        params={**params, "_model_overrides": mo}, status="queued")
         db.add(tr)
         db.commit()
         return {"kind": "audio", "task_id": tr.id, "project_id": project.id}
@@ -220,7 +226,8 @@ def dispatch_job(db: Session, user, module: str, params: dict, req_id: int) -> d
         db.add(fv)
         db.commit()
         tr = TaskRecord(user_id=user.id, project_id=project.id, module="render",
-                        kind="render", ref_id=fv.id, params=dict(params), status="queued")
+                        kind="render", ref_id=fv.id,
+                        params={**params, "_model_overrides": mo}, status="queued")
         db.add(tr)
         db.commit()
         return {"kind": "render", "task_id": tr.id, "final_video_id": fv.id}
@@ -231,7 +238,8 @@ def dispatch_job(db: Session, user, module: str, params: dict, req_id: int) -> d
             raise ValueError("成片不存在")
         _budget_guard(db, user, db.get(Project, fv.project_id), "compliance", params)
         tr = TaskRecord(user_id=user.id, project_id=fv.project_id, module="compliance",
-                        kind="compliance", ref_id=fv.id, params=dict(params), status="queued")
+                        kind="compliance", ref_id=fv.id,
+                        params={**params, "_model_overrides": mo}, status="queued")
         db.add(tr)
         db.commit()
         return {"kind": "compliance", "task_id": tr.id, "final_video_id": fv.id}
@@ -239,11 +247,13 @@ def dispatch_job(db: Session, user, module: str, params: dict, req_id: int) -> d
     raise ValueError(f"不支持的模块: {module}")
 
 
-def _auto_generate_characters(db: Session, user, project: Project, params: dict) -> dict:
+def _auto_generate_characters(db: Session, user, project: Project, params: dict,
+                              mo: dict | None = None) -> dict:
     """AI 自动生成角色资产：从小说角色表提取，批量创建角色 + 异步生成三视图/表情集。
 
     用户只需在闸口确认成本，AI 自动完成全部角色资产的创建和生成。
     """
+    mo = mo or user.model_setting or {}
     if not project:
         raise ValueError("缺少 project_id")
     novel = db.query(Novel).filter(Novel.project_id == project.id,
@@ -283,7 +293,8 @@ def _auto_generate_characters(db: Session, user, project: Project, params: dict)
             # 已存在但图片未生成 → 补生成任务
             if not existing.ref_images:
                 tr = TaskRecord(user_id=user.id, project_id=project.id, module="character",
-                                kind="character", ref_id=existing.id, params=dict(params),
+                                kind="character", ref_id=existing.id,
+                                params={**params, "_model_overrides": mo},
                                 status="queued")
                 db.add(tr)
                 db.flush()
@@ -300,7 +311,8 @@ def _auto_generate_characters(db: Session, user, project: Project, params: dict)
         db.flush()
 
         tr = TaskRecord(user_id=user.id, project_id=project.id, module="character",
-                        kind="character", ref_id=char.id, params=dict(params),
+                        kind="character", ref_id=char.id,
+                        params={**params, "_model_overrides": mo},
                         status="queued")
         db.add(tr)
         db.flush()

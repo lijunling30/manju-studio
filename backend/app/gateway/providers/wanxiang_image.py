@@ -1,12 +1,14 @@
-"""通义万相（DashScope）图像厂商（真实接入，异步任务式）。
+"""通义万相 2.7 图像厂商（真实接入，同步 multimodal-generation 接口）。
 
-流程：提交文生图任务（X-DashScope-Async: enable）→ 轮询任务状态 →
-下载结果图到本地 storage/，返回 /storage/images/xxx.png（与 mock 同格式）。
+套餐内可用模型：wan2.7-image / wan2.7-image-pro
+- 接口：POST /api/v1/services/aigc/multimodal-generation/generation（同步）
+- 请求体采用 messages 风格（与 wanx2.1-t2i-turbo 不同），单轮对话返回图片 URL
+- wan2.7-image-pro 文生图支持 4K，质量更好；wan2.7-image 速度更快
 
 对外接口与 mock_image 同名同签名：generate_character_ref /
 generate_expression / generate_keyframe，均返回相对 URL 字符串。
 
-调用方注意：本模块为同步实现（httpx.Client + time.sleep 轮询），
+调用方注意：本模块为同步实现（httpx.Client），
 请在异步任务层用 asyncio.to_thread 包装，避免阻塞事件循环。
 """
 import logging
@@ -36,64 +38,96 @@ def _headers() -> dict:
         raise ProviderError(
             "未配置 DASHSCOPE_API_KEY：请在 backend/.env 填写阿里云百炼 API Key "
             "（或保持 MOCK_MODE=true 使用模拟模式）")
-    return {"Authorization": f"Bearer {settings.DASHSCOPE_API_KEY}"}
+    return {"Authorization": f"Bearer {settings.DASHSCOPE_API_KEY}",
+            "Content-Type": "application/json"}
 
 
-def _submit_text2image(prompt: str, size: str, n: int = 1, max_retries: int = 5) -> str:
-    """提交文生图异步任务，返回 task_id。429 限流时自动等待重试。"""
-    url = f"{settings.DASHSCOPE_BASE_URL.rstrip('/')}/api/v1/services/aigc/text2image/image-synthesis"
+def _extract_image_url(resp_json: dict) -> str:
+    """从万相 2.7 同步响应中稳健提取图片 URL。
+
+    响应结构（实际可能因版本略有差异）：
+      {"output": {"choices": [{"message": {"content": [{"image": "https://..."}]}}]}}
+    或：
+      {"output": {"results": [{"url": "https://..."}]}}
+    """
+    out = resp_json.get("output") or {}
+
+    # 路径1：choices[].message.content[].image
+    for choice in (out.get("choices") or []):
+        msg = choice.get("message") or {}
+        for item in (msg.get("content") or []):
+            if isinstance(item, dict) and item.get("image"):
+                return item["image"]
+            if isinstance(item, str) and item.startswith("http"):
+                return item
+
+    # 路径2：results[].url（兼容旧格式）
+    for r in (out.get("results") or []):
+        if isinstance(r, dict) and r.get("url"):
+            return r["url"]
+
+    # 路径3：直接 url 字段
+    if out.get("url"):
+        return out["url"]
+
+    # 路径4：顶层 choices（部分版本无 output 包裹）
+    for choice in (resp_json.get("choices") or []):
+        msg = choice.get("message") or {}
+        for item in (msg.get("content") or []):
+            if isinstance(item, dict) and item.get("image"):
+                return item["image"]
+
+    raise ProviderError(f"万相 2.7 响应未包含图片 URL：{str(resp_json)[:300]}")
+
+
+def _gen_image(prompt: str, size: str = "2K", max_retries: int = 3,
+               model: str | None = None) -> str:
+    """调用万相 2.7 同步文生图，下载结果图到本地 storage，返回相对 URL。
+
+    size: "1K" / "2K" / "4K"（wan2.7-image-pro 文生图支持 4K）
+    model: None 时用 .env 默认模型；可传 wan2.7-image / wan2.7-image-pro
+    429 限流时指数退避重试。
+    """
+    url = f"{settings.DASHSCOPE_BASE_URL.rstrip('/')}/api/v1/services/aigc/multimodal-generation/generation"
     body = {
-        "model": settings.DASHSCOPE_IMAGE_MODEL,
-        "input": {"prompt": prompt},
-        "parameters": {"size": size, "n": n},
+        "model": model or settings.DASHSCOPE_IMAGE_MODEL,
+        "input": {
+            "messages": [
+                {"role": "user", "content": [{"text": prompt}]}
+            ]
+        },
+        "parameters": {"size": size, "n": 1, "watermark": False},
     }
-    headers = {**_headers(), "Content-Type": "application/json",
-               "X-DashScope-Async": "enable"}
+    last_err: Exception | None = None
     for attempt in range(max_retries):
         try:
-            resp = _get_client().post(url, headers=headers, json=body)
+            time.sleep(1.0)  # 提交间隔，降低 429 风险
+            resp = _get_client().post(url, headers=_headers(), json=body)
             if resp.status_code == 429:
-                wait = 15 * (attempt + 1)  # 15, 30, 45, 60, 75 秒递增退避
-                logger.warning("通义万相限流（429），%ds 后重试（第 %d/%d 次）",
+                wait = 15 * (attempt + 1)
+                logger.warning("万相 2.7 限流（429），%ds 后重试（第 %d/%d 次）",
                                wait, attempt + 1, max_retries)
                 time.sleep(wait)
                 continue
             resp.raise_for_status()
-            return resp.json()["output"]["task_id"]
+            img_url = _extract_image_url(resp.json())
+            return _download(img_url)
         except httpx.HTTPStatusError as exc:
+            last_err = exc
+            if resp.status_code == 429:
+                continue
             raise ProviderError(
-                f"通义万相提交失败 HTTP {exc.response.status_code}: {exc.response.text[:300]}") from exc
-        except (httpx.HTTPError, KeyError, ValueError) as exc:
-            raise ProviderError(f"通义万相提交失败: {exc}") from exc
-    raise ProviderError(f"通义万相限流，已重试 {max_retries} 次仍失败（请稍后再试）")
-
-
-def _wait_task(task_id: str, timeout: float, interval: float) -> list[str]:
-    """轮询异步任务直至成功，返回结果 URL 列表；失败抛 ProviderError。"""
-    url = f"{settings.DASHSCOPE_BASE_URL.rstrip('/')}/api/v1/tasks/{task_id}"
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        time.sleep(interval)
-        try:
-            resp = _get_client().get(url, headers=_headers())
-            resp.raise_for_status()
-            out = resp.json().get("output") or {}
-            status = out.get("task_status", "PENDING")
-        except httpx.HTTPError as exc:
-            raise ProviderError(f"通义万相查询任务失败: {exc}") from exc
-
-        if status == "SUCCEEDED":
-            results = [r["url"] for r in (out.get("results") or [])]
-            if not results:
-                raise ProviderError("通义万相任务成功但无结果图")
-            return results
-        if status in ("FAILED", "CANCELED"):
-            code = out.get("code", "")
-            msg = out.get("message", "")
-            raise ProviderError(f"通义万相任务{status}（{code} {msg}）")
-        # PENDING / RUNNING → 继续轮询
-        logger.info("通义万相任务 %s 状态 %s，继续等待", task_id, status)
-    raise ProviderError(f"通义万相任务超时（>{int(timeout)}s）")
+                f"万相 2.7 调用失败 HTTP {exc.response.status_code}: "
+                f"{exc.response.text[:300]}") from exc
+        except (httpx.HTTPError, ValueError, KeyError) as exc:
+            last_err = exc
+            logger.warning("万相 2.7 调用异常（第 %d/%d 次）：%s",
+                           attempt + 1, max_retries, exc)
+            if attempt < max_retries - 1:
+                time.sleep(5)
+                continue
+            raise ProviderError(f"万相 2.7 调用失败: {exc}") from exc
+    raise ProviderError(f"万相 2.7 限流，已重试 {max_retries} 次仍失败（{last_err}）")
 
 
 def _download(url: str) -> str:
@@ -112,35 +146,25 @@ def _download(url: str) -> str:
     return save_bytes(resp.content, "images", ext)
 
 
-def _gen_image(prompt: str, size: str = "720*1280") -> str:
-    """一次文生图完整流程（提交 → 轮询 → 下载第一张）。"""
-    time.sleep(1.5)  # 提交间隔，降低请求频率避免厂商 API 限流（429）
-    task_id = _submit_text2image(prompt, size)
-    urls = _wait_task(task_id, settings.AI_IMAGE_TASK_TIMEOUT, settings.AI_TASK_POLL_INTERVAL)
-    return _download(urls[0])
-
-
-def _style_hint() -> str:
-    return ("漫画分镜风格，电影级光影，高清细节，构图考究，"
-            "色彩明快，符合国漫审美，无文字水印")
-
-
 # ---------- 对外 API（与 mock_image 同名同签名） ----------
-def generate_character_ref(character_name: str, appearance: str, seed: int) -> str:
+def generate_character_ref(character_name: str, appearance: str, seed: int,
+                           model: str | None = None) -> str:
     """生成单张角色三视图候选图（正面/侧面/背面）。用于候选抽卡，不同 seed 产出不同变体。"""
     prompt = prompt_builder.character_threeview(character_name, appearance)
-    return _gen_image(prompt, size="1024*1024")
+    return _gen_image(prompt, size="2K", model=model)
 
 
-def generate_expression(character_name: str, appearance: str, emotion: str, seed: int) -> str:
+def generate_expression(character_name: str, appearance: str, emotion: str, seed: int,
+                        model: str | None = None) -> str:
     """生成角色表情候选图。使用与选中三视图相同的 seed + 详细外貌描述，增强角色一致性。"""
     prompt = prompt_builder.character_expression(character_name, appearance, emotion)
-    return _gen_image(prompt, size="1024*1024")
+    return _gen_image(prompt, size="2K", model=model)
 
 
 def generate_keyframe(shot_no: int, scene_desc: str, prompt_zh: str, char_names: list[str],
-                      seed: int, round_no: int) -> str:
+                      seed: int, round_no: int, model: str | None = None) -> str:
     chars = "、".join(char_names[:3]) or "主角"
     prompt = (f"{prompt_zh}。角色：{chars}。竖屏 9:16 漫画关键帧构图，"
-              f"远景环境交代+主体动作清晰，{_style_hint()}")
-    return _gen_image(prompt, size="720*1280")
+              f"远景环境交代+主体动作清晰，漫画分镜风格，电影级光影，"
+              f"高清细节，构图考究，色彩明快，符合国漫审美，无文字水印")
+    return _gen_image(prompt, size="2K", model=model)
