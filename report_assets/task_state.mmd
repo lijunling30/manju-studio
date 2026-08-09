@@ -1,0 +1,11 @@
+stateDiagram-v2
+    [*] --> queued
+    queued --> running: Worker 派发
+    running --> success: 完成
+    running --> failed: ProviderError
+    failed --> retrying: 重试次数小于3
+    retrying --> running: 指数退避后
+    failed --> manual_review: 重试3次仍失败
+    running --> cancelled: 用户取消
+    running --> manual_review: 卡死30分钟兜底
+    manual_review --> [*]: 人工介入

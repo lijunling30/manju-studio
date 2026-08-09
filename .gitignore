@@ -19,7 +19,13 @@ frontend/.env.local
 frontend/tsconfig.tsbuildinfo
 frontend/next-env.d.ts
 npm-debug.log*
+
+# ---- 运行日志(整理至 logs/ 目录) ----
+logs/
 manju_launcher.log
+
+# ---- 报告生成临时文件 ----
+_temp/
 
 # ---- IDE / OS ----
 .idea/

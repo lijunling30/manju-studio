@@ -1,0 +1,35 @@
+graph TD
+    subgraph L1[L1 前端工作台 Next.js 14]
+        UI1[登录注册]
+        UI2[仪表盘]
+        UI3[九步流水线页面]
+        UI4[确认卡]
+        UI5[任务中心]
+    end
+    subgraph L2[L2 API 层 FastAPI 十四模块]
+        API[auth / projects / novels / scripts / shots / characters / keyframes / video_tasks / audio / final_videos / costs / ai_requests / tasks / model_settings]
+    end
+    subgraph L3[L3 服务层]
+        GATE[确认闸口 gate.py]
+        DISPATCH[任务派发 dispatch.py]
+        WORKER[编排 Worker]
+    end
+    subgraph L4[L4 AI 模型网关 技术护城河]
+        GW[router.py 统一门面]
+        PB[prompt_builder.py 提示词]
+        COST[costs.py 成本模型]
+    end
+    subgraph L5[L5 厂商适配层]
+        P1[DeepSeek 文本]
+        P2[通义万相 图像]
+        P3[HappyHorse 视频]
+        P4[QwenAudio TTS]
+        P5[Mock 厂商 x8]
+    end
+    subgraph L6[L6 基础设施]
+        DB[(SQLite / PostgreSQL)]
+        FS[storage 资产文件]
+    end
+    L1 --> L2 --> L3 --> L4 --> L5
+    L3 --> DB
+    L5 --> FS

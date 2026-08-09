@@ -1,0 +1,57 @@
+erDiagram
+    USER ||--o{ PROJECT : owns
+    USER ||--o{ CHARACTER_LIBRARY : owns
+    PROJECT ||--o{ NOVEL : has
+    PROJECT ||--o{ SCRIPT : has
+    PROJECT ||--o{ SHOT : has
+    PROJECT ||--o{ FINAL_VIDEO : has
+    PROJECT ||--o{ COST_LOG : tracks
+    NOVEL ||--o{ SCRIPT : converts
+    SCRIPT ||--o{ SHOT : breaks_into
+    CHARACTER_LIBRARY ||--o{ CHARACTER : contains
+    SHOT ||--o{ KEYFRAME : draws
+    SHOT ||--o{ VIDEO_TASK : renders
+    SHOT ||--o{ AUDIO_ASSET : voices
+    KEYFRAME ||--o{ VIDEO_TASK : drives
+    FINAL_VIDEO ||--o{ AUDIT_REPORT : audits
+    USER ||--o{ AI_REQUEST : gates
+    USER ||--o{ COST_LOG : spends
+
+    USER {
+        int id PK
+        string phone
+        string nickname
+        json gate_setting
+        json model_setting
+    }
+    SHOT {
+        int id PK
+        int project_id FK
+        int shot_no
+        string prompt_zh
+        json char_ref_ids
+        string status
+    }
+    KEYFRAME {
+        int id PK
+        int shot_id FK
+        string image_url
+        string source_url
+        json score
+        bool is_approved
+    }
+    VIDEO_TASK {
+        int id PK
+        int shot_id FK
+        string vendor
+        string status
+        int retry_count
+        float progress
+    }
+    AI_REQUEST {
+        int id PK
+        string status
+        string intent
+        json cost_estimate
+        int confirm_round
+    }

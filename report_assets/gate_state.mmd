@@ -1,0 +1,13 @@
+stateDiagram-v2
+    [*] --> draft: open_ai_request 需确认
+    [*] --> bypassed: 闸口关闭
+    draft --> confirmed: 用户确认
+    draft --> rejected: 用户驳回带修正
+    rejected --> draft: 重新复述 最多3轮
+    rejected --> cancelled: 超3轮 转人工
+    draft --> cancelled: 用户放弃
+    draft --> timeout: 60秒未确认自动清扫
+    confirmed --> [*]: 执行任务 产生费用
+    bypassed --> [*]: 直接执行 产生费用
+    cancelled --> [*]: 不产生费用
+    timeout --> [*]: 不产生费用

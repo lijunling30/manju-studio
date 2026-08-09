@@ -1,0 +1,21 @@
+sequenceDiagram
+    participant U as 用户
+    participant F as 前端工作台
+    participant G as 确认闸口
+    participant D as 任务派发
+    participant W as Worker
+    participant V as AI厂商
+
+    U->>F: 输入题材+主角人设
+    F->>G: POST /novels/generate
+    G->>G: 复述需求 + 预估成本
+    G-->>F: 确认卡(intent+params+cost)
+    U->>F: 确认/修改/放弃
+    F->>G: POST /ai_requests/{id}/confirm
+    G->>D: 派发任务
+    D->>W: TaskRecord(queued)
+    W->>V: 调用 DeepSeek 生成小说
+    V-->>W: 章节+角色+大纲
+    W->>W: 记账 cost_log
+    W-->>F: 任务完成(success)
+    F-->>U: 小说章节展示
