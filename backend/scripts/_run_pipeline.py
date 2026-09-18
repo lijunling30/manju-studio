@@ -146,15 +146,23 @@ def main():
         "batch_count": 1, "session_id": SID})
     if r.status_code != 200:
         raise RuntimeError(f"角色请求失败 {r.status_code}: {r.text[:300]}")
+    # 期望数以派发返回的任务数为准（角色库复用时同名角色会跳过重建，任务数 < 角色数）
+    dispatched = (r.json().get("dispatch") or {}).get("task_ids") or []
     time.sleep(3)
     r2 = c.get(f"/api/projects/{pid}/characters")
     chars = r2.json() if r2.status_code == 200 else []
     nchar = len(chars)
-    log(f"  项目角色数：{nchar} {[c['name'] for c in chars]}")
+    reused = nchar - len(dispatched)
+    log(f"  项目角色数：{nchar} {[c['name'] for c in chars]}（复用资产库 {reused} 个，新建任务 {len(dispatched)} 个）")
     if nchar == 0:
         raise RuntimeError("小说未生成角色，无法继续")
-    sc, fl = wait_kind("character", pid, nchar, timeout=1200, label=f"角色三视图({nchar})")
-    log(f"  角色三视图完成：成功 {sc}/{nchar}（{int(time.time()-t)}s）")
+    if dispatched:
+        sc, fl = wait_kind("character", pid, len(dispatched), timeout=1200,
+                           label=f"角色三视图(新建{len(dispatched)})")
+    else:
+        log("  全部角色已由资产库复用，无需生成")
+        sc = 0
+    log(f"  角色三视图完成：成功 {sc}/{len(dispatched)}（{int(time.time()-t)}s）")
     # 跳过表情集（不影响图生视频成片）
 
     # M4 分镜（同步）

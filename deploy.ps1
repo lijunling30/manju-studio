@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+﻿﻿#Requires -Version 5.1
 <#
 漫镜工场 ManJu Studio · 一键部署脚本
 ======================================
